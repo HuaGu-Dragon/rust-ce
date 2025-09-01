@@ -1,6 +1,9 @@
 {
-    "cSpell.words": [
-        "minwindef",
-        "psapi"
-    ]
+  "cSpell.words": [
+    "ctypes",
+    "handleapi",
+    "minwindef",
+    "processthreadsapi",
+    "psapi"
+  ]
 }

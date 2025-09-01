@@ -1,3 +1,5 @@
+use std::ptr::NonNull;
+
 fn main() {
     dbg!(enum_proc().unwrap().len());
 }
@@ -18,4 +20,32 @@ pub fn enum_proc() -> anyhow::Result<Vec<u32>> {
         pid.set_len(size as usize / size_of::<u32>());
     }
     Ok(pid)
+}
+
+pub struct Process {
+    pid: u32,
+    handle: NonNull<winapi::ctypes::c_void>,
+}
+
+impl Process {
+    pub fn open(pid: u32) -> anyhow::Result<Self> {
+        let handle = unsafe {
+            winapi::um::processthreadsapi::OpenProcess(
+                winapi::um::winnt::PROCESS_QUERY_INFORMATION,
+                winapi::shared::minwindef::FALSE,
+                pid,
+            )
+        };
+        let handle = NonNull::new(handle)
+            .ok_or_else(|| anyhow::anyhow!("Failed to open process: {}", pid))?;
+        Ok(Process { pid, handle })
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        unsafe {
+            winapi::um::handleapi::CloseHandle(self.handle.as_ptr());
+        }
+    }
 }
