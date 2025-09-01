@@ -1,6 +1,6 @@
 # Writing my own Cheat Engine
 
-- [ ] Part 1: Introduction
+- [x] Part 1: Introduction
 - [ ] Part 2: Exact Value scanning
 - [ ] Part 3: Unknown initial value
 - [ ] Part 4: Floating points
