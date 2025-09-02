@@ -74,18 +74,16 @@ fn main() -> anyhow::Result<()> {
         }
     });
 
-    println!("Found {} locations", location.len());
     loop {
+        println!("Found {} locations", location.len());
         target.clear();
         std::io::stdin().read_line(&mut target)?;
         let target = target.trim().parse::<i32>()?.to_ne_bytes();
         location.retain(|&addr| match process.read_memory(addr, target.len()) {
             Ok(memory) => {
                 if memory == target {
-                    println!("    Still found exact value at [{:x}]", addr);
                     true
                 } else {
-                    println!("    Value changed at [{:x}]", addr);
                     false
                 }
             }
@@ -96,6 +94,13 @@ fn main() -> anyhow::Result<()> {
             break;
         }
     }
+
+    let mut target = String::new();
+    print!("Write new value: ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    std::io::stdin().read_line(&mut target)?;
+    let target = target.trim().parse::<i32>()?.to_ne_bytes();
+    process.write_memory(location[0], &target)?;
     Ok(())
 }
 
@@ -210,6 +215,24 @@ impl Process {
                 buffer.set_len(read);
             }
             Ok(buffer)
+        }
+    }
+
+    pub fn write_memory(&self, addr: usize, value: &[u8]) -> anyhow::Result<usize> {
+        let mut written = 0;
+        if unsafe {
+            winapi::um::memoryapi::WriteProcessMemory(
+                self.handle.as_ptr(),
+                addr as _,
+                value.as_ptr().cast(),
+                value.len(),
+                &raw mut written,
+            )
+        } == winapi::shared::minwindef::FALSE
+        {
+            Err(std::io::Error::last_os_error().into())
+        } else {
+            Ok(written)
         }
     }
 }
