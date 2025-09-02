@@ -16,19 +16,40 @@ fn main() -> anyhow::Result<()> {
                 return;
             }
         };
-        println!("{}: {}", pid, name);
+        println!("{}: {}", process.pid, name);
+
         let mask = winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
             | winapi::um::winnt::PAGE_EXECUTE_READWRITE
             | winapi::um::winnt::PAGE_WRITECOPY
             | winapi::um::winnt::PAGE_READWRITE;
-        dbg!(
-            process
-                .memory_region()
-                .into_iter()
-                .filter(|region| region.Protect & mask != 0)
-                .map(|p| p.RegionSize)
-                .sum::<usize>()
-        );
+        let regions: Vec<_> = process
+            .memory_region()
+            .into_iter()
+            .filter(|region| region.Protect & mask != 0)
+            .collect();
+        println!("  Memory Regions: {}", regions.len());
+
+        let target = 10000u32;
+        let target = target.to_ne_bytes();
+
+        regions.into_iter().for_each(|region| {
+            match process.read_memory(region.BaseAddress as _, region.RegionSize) {
+                Ok(memory) => {
+                    memory
+                        .chunks_exact(target.len())
+                        .enumerate()
+                        .for_each(|(offset, chunk)| {
+                            if chunk == target {
+                                println!(
+                                    "    Found exact value at [{:?}+{:x}]",
+                                    region.BaseAddress, offset
+                                );
+                            }
+                        })
+                }
+                Err(e) => eprintln!("    Failed to read memory at {:?}: {e}", region.BaseAddress),
+            }
+        })
     });
     Ok(())
 }
