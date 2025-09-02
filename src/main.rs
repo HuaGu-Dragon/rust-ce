@@ -17,40 +17,85 @@ fn main() -> anyhow::Result<()> {
             }
         };
         println!("{}: {}", process.pid, name);
-
-        let mask = winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
-            | winapi::um::winnt::PAGE_EXECUTE_READWRITE
-            | winapi::um::winnt::PAGE_WRITECOPY
-            | winapi::um::winnt::PAGE_READWRITE;
-        let regions: Vec<_> = process
-            .memory_region()
-            .into_iter()
-            .filter(|region| region.Protect & mask != 0)
-            .collect();
-        println!("  Memory Regions: {}", regions.len());
-
-        let target = 10000u32;
-        let target = target.to_ne_bytes();
-
-        regions.into_iter().for_each(|region| {
-            match process.read_memory(region.BaseAddress as _, region.RegionSize) {
-                Ok(memory) => {
-                    memory
-                        .chunks_exact(target.len())
-                        .enumerate()
-                        .for_each(|(offset, chunk)| {
-                            if chunk == target {
-                                println!(
-                                    "    Found exact value at [{:?}+{:x}]",
-                                    region.BaseAddress, offset
-                                );
-                            }
-                        })
-                }
-                Err(e) => eprintln!("    Failed to read memory at {:?}: {e}", region.BaseAddress),
-            }
-        })
     });
+
+    let mut input = String::new();
+    let process = loop {
+        print!("Enter a pid: ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        let pid: u32 = input.trim().parse()?;
+        match Process::open(pid) {
+            Ok(process) => break process,
+            Err(e) => {
+                println!("{e}");
+                input.clear();
+                continue;
+            }
+        };
+    };
+
+    let mask = winapi::um::winnt::PAGE_EXECUTE_READWRITE
+        | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
+        | winapi::um::winnt::PAGE_READWRITE
+        | winapi::um::winnt::PAGE_WRITECOPY;
+    let regions: Vec<_> = process
+        .memory_region()
+        .into_iter()
+        .filter(|region| region.Protect & mask != 0)
+        .collect();
+    println!("  Memory Regions: {}", regions.len());
+
+    let mut location = Vec::with_capacity(regions.len());
+
+    let mut target = String::new();
+    std::io::stdin().read_line(&mut target)?;
+    let first = target.trim().parse::<i32>()?.to_ne_bytes();
+
+    regions.into_iter().for_each(|region| {
+        match process.read_memory(region.BaseAddress as _, region.RegionSize) {
+            Ok(memory) => {
+                memory
+                    .chunks_exact(first.len())
+                    .enumerate()
+                    .for_each(|(offset, chunk)| {
+                        if chunk == first {
+                            location.push(
+                                region.BaseAddress as usize
+                                    + offset * std::mem::size_of_val(&first),
+                            );
+                        }
+                    })
+            }
+            Err(e) => eprintln!(
+                "    Failed to read {} bytes at {:?}: {e}",
+                region.RegionSize, region.BaseAddress
+            ),
+        }
+    });
+
+    println!("Found {} locations", location.len());
+    loop {
+        target.clear();
+        std::io::stdin().read_line(&mut target)?;
+        let target = target.trim().parse::<i32>()?.to_ne_bytes();
+        location.retain(|&addr| match process.read_memory(addr, target.len()) {
+            Ok(memory) => {
+                if memory == target {
+                    println!("    Still found exact value at [{:x}]", addr);
+                    true
+                } else {
+                    println!("    Value changed at [{:x}]", addr);
+                    false
+                }
+            }
+            Err(_) => false,
+        });
+        if location.len() == 1 {
+            println!("    Found unique value at [{:x}]", location[0]);
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -159,12 +204,13 @@ impl Process {
                 &mut read,
             ) == winapi::shared::minwindef::FALSE
         } {
-            return Err(std::io::Error::last_os_error().into());
+            Err(std::io::Error::last_os_error().into())
+        } else {
+            unsafe {
+                buffer.set_len(read);
+            }
+            Ok(buffer)
         }
-        unsafe {
-            buffer.set_len(read);
-        }
-        Ok(buffer)
     }
 }
 
