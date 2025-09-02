@@ -17,6 +17,18 @@ fn main() -> anyhow::Result<()> {
             }
         };
         println!("{}: {}", pid, name);
+        let mask = winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
+            | winapi::um::winnt::PAGE_EXECUTE_READWRITE
+            | winapi::um::winnt::PAGE_WRITECOPY
+            | winapi::um::winnt::PAGE_READWRITE;
+        dbg!(
+            process
+                .memory_region()
+                .into_iter()
+                .filter(|region| region.Protect & mask != 0)
+                .map(|p| p.RegionSize)
+                .sum::<usize>()
+        );
     });
     Ok(())
 }
@@ -91,21 +103,26 @@ impl Process {
         Ok(String::from_utf16_lossy(&buffer[..length as usize]))
     }
 
-    pub fn memory_region(&self) -> anyhow::Result<winapi::um::winnt::MEMORY_BASIC_INFORMATION> {
+    pub fn memory_region(&self) -> Vec<winapi::um::winnt::MEMORY_BASIC_INFORMATION> {
+        let mut base = 0;
+        let mut region = Vec::new();
         let mut info = MaybeUninit::uninit();
 
-        let written = unsafe {
-            winapi::um::memoryapi::VirtualQueryEx(
-                self.handle.as_ptr(),
-                std::ptr::null(),
-                info.as_mut_ptr(),
-                size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
-            )
-        };
-        if written == 0 {
-            Err(std::io::Error::last_os_error().into())
-        } else {
-            Ok(unsafe { info.assume_init() })
+        loop {
+            let written = unsafe {
+                winapi::um::memoryapi::VirtualQueryEx(
+                    self.handle.as_ptr(),
+                    base as _,
+                    info.as_mut_ptr(),
+                    size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
+                )
+            };
+            if written == 0 {
+                break region;
+            }
+            let info = unsafe { info.assume_init() };
+            base = info.BaseAddress as usize + info.RegionSize;
+            region.push(info);
         }
     }
 

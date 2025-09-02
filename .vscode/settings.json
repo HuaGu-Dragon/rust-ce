@@ -5,6 +5,8 @@
     "memoryapi",
     "minwindef",
     "processthreadsapi",
-    "psapi"
+    "psapi",
+    "READWRITE",
+    "WRITECOPY"
   ]
 }
