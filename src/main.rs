@@ -289,8 +289,22 @@ impl FromStr for Scan {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.as_bytes()[0] {
             b'u' => Ok(Scan::Unknown),
-            b'd' => Ok(Scan::Decreased),
-            b'i' => Ok(Scan::Increased),
+            b'd' => {
+                let n = s[1..].trim();
+                if n.is_empty() {
+                    Ok(Scan::Decreased)
+                } else {
+                    Ok(Scan::DecreasedBy(n.parse()?))
+                }
+            }
+            b'i' => {
+                let n = s[1..].trim();
+                if n.is_empty() {
+                    Ok(Scan::Increased)
+                } else {
+                    Ok(Scan::IncreasedBy(n.parse()?))
+                }
+            }
             b'=' => Ok(Scan::Unchanged),
             b'~' => Ok(Scan::Changed),
             _ => {
