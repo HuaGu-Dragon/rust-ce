@@ -46,53 +46,17 @@ fn main() -> anyhow::Result<()> {
         .collect();
     println!("  Memory Regions: {}", regions.len());
 
-    let mut location = Vec::with_capacity(regions.len());
+    let scan = Scan::new()?;
 
-    let mut target = String::new();
-    std::io::stdin().read_line(&mut target)?;
-    let first = target.trim().parse::<i32>()?.to_ne_bytes();
+    let mut locations = process.scan_regions(&regions, scan);
 
-    regions.into_iter().for_each(|region| {
-        match process.read_memory(region.BaseAddress as _, region.RegionSize) {
-            Ok(memory) => {
-                memory
-                    .chunks_exact(first.len())
-                    .enumerate()
-                    .for_each(|(offset, chunk)| {
-                        if chunk == first {
-                            location.push(
-                                region.BaseAddress as usize
-                                    + offset * std::mem::size_of_val(&first),
-                            );
-                        }
-                    })
-            }
-            Err(e) => eprintln!(
-                "    Failed to read {} bytes at {:?}: {e}",
-                region.RegionSize, region.BaseAddress
-            ),
-        }
-    });
-
-    loop {
-        println!("Found {} locations", location.len());
-        target.clear();
-        std::io::stdin().read_line(&mut target)?;
-        let target = target.trim().parse::<i32>()?.to_ne_bytes();
-        location.retain(|&addr| match process.read_memory(addr, target.len()) {
-            Ok(memory) => {
-                if memory == target {
-                    true
-                } else {
-                    false
-                }
-            }
-            Err(_) => false,
-        });
-        if location.len() == 1 {
-            println!("    Found unique value at [{:x}]", location[0]);
-            break;
-        }
+    while locations.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
+        println!(
+            "  Candidate Locations: {}",
+            locations.iter().map(|r| r.locations.len()).sum::<usize>()
+        );
+        let scan = Scan::new()?;
+        locations = process.re_scan_regions(locations, scan);
     }
 
     let mut target = String::new();
@@ -100,7 +64,12 @@ fn main() -> anyhow::Result<()> {
     std::io::Write::flush(&mut std::io::stdout())?;
     std::io::stdin().read_line(&mut target)?;
     let target = target.trim().parse::<i32>()?.to_ne_bytes();
-    process.write_memory(location[0], &target)?;
+    match locations[0].locations {
+        CandidateLocations::Discrete { ref locations } => {
+            process.write_memory(locations[0], &target)?;
+        }
+        _ => anyhow::bail!("Unexpected candidate locations"),
+    }
     Ok(())
 }
 
@@ -310,7 +279,7 @@ pub enum Scan {
 
 impl Scan {
     pub fn new() -> anyhow::Result<Self> {
-        writeln!(std::io::stdout(), "scan (? for help)")?;
+        write!(std::io::stdout(), "scan (? for help) >")?;
         std::io::Write::flush(&mut std::io::stdout())?;
 
         let mut input = String::new();
@@ -320,13 +289,13 @@ impl Scan {
             match trimmed {
                 "u" => break Scan::Unknown,
                 "d" => break Scan::Decreased,
-                "h" => {
+                "?" => {
                     writeln!(std::io::stdout(), "Help:")?;
                     writeln!(std::io::stdout(), "(empty): exact value scan")?;
                     writeln!(std::io::stdout(), "u: unknown value")?;
                     writeln!(std::io::stdout(), "d: decreased value")?;
-                    writeln!(std::io::stdout(), "h: help")?;
-                    writeln!(std::io::stdout(), "")?;
+                    write!(std::io::stdout(), "scan (? for help) >")?;
+                    std::io::Write::flush(&mut std::io::stdout())?;
                     input.clear();
                     continue;
                 }
@@ -338,7 +307,8 @@ impl Scan {
                         }
                         Err(_) => {
                             writeln!(std::io::stdout(), "Invalid option {trimmed}")?;
-                            writeln!(std::io::stdout(), "scan (? for help)")?;
+                            writeln!(std::io::stdout(), "scan (? for help) >")?;
+                            std::io::Write::flush(&mut std::io::stdout())?;
                             input.clear();
                             continue;
                         }
@@ -386,24 +356,58 @@ impl Scan {
     }
     pub fn rerun(self, region: Region, memory: Vec<u8>) -> Option<Region> {
         match self {
-            Scan::Exact(_) => self.run(region.info, memory),
-            Scan::Unknown => Some(region),
-            Scan::Decreased => Some(Region {
-                info: region.info,
-                locations: CandidateLocations::Discrete {
-                    locations: {
-                        region
-                            .iter_location(&memory)
-                            .filter_map(
-                                |(addr, old, new)| {
-                                    if new < old { Some(addr) } else { None }
-                                },
-                            )
-                            .collect()
+            Scan::Exact(n) => {
+                let region = Region {
+                    info: region.info,
+                    locations: CandidateLocations::Discrete {
+                        locations: {
+                            region
+                                .iter_location(&memory)
+                                .filter_map(|(addr, _old, new)| {
+                                    println!("Rerunning scan at {addr:#x}: {_old} -> {new}");
+                                    if new == n {
+                                        println!("Found matching address: {addr:#x}");
+                                        Some(addr)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect()
+                        },
                     },
-                },
-                value: Value::Any(memory),
-            }),
+                    value: Value::Exact(n),
+                };
+                if region.locations.len() == 0 {
+                    None
+                } else {
+                    Some(region)
+                }
+            }
+            Scan::Unknown => Some(region),
+            Scan::Decreased => {
+                let region = Region {
+                    info: region.info,
+                    locations: CandidateLocations::Discrete {
+                        locations: {
+                            region
+                                .iter_location(&memory)
+                                .filter_map(
+                                    |(addr, old, new)| {
+                                        if new < old { Some(addr) } else { None }
+                                    },
+                                )
+                                .collect()
+                        },
+                    },
+                    value: Value::Any(memory),
+                };
+
+                if region.locations.len() == 0 {
+                    None
+                } else {
+                    Some(region)
+                }
+            }
         }
     }
 }
