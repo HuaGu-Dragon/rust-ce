@@ -46,18 +46,22 @@ fn main() -> anyhow::Result<()> {
         .collect();
     println!("  Memory Regions: {}", regions.len());
 
-    let scan = process.scan_regions(&regions, Scan::Unknown);
+    let mut scan = process.scan_regions(&regions, Scan::Unknown);
     println!("  Scanned Regions: {}", scan.len());
     println!(
         "  Found {} locations",
         scan.iter().map(|r| r.locations.len()).sum::<usize>()
     );
-    std::thread::sleep(std::time::Duration::from_secs(10));
-    let last_scan = process.re_scan_regions(&scan, Scan::Decreased);
-    println!(
-        "Found {} locations",
-        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
-    );
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let last_scan = process.re_scan_regions(scan, Scan::Decreased);
+        println!(
+            "Found {} locations",
+            last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
+        );
+        scan = last_scan;
+    }
 
     let mut location = Vec::with_capacity(regions.len());
 
@@ -259,74 +263,33 @@ impl Process {
     ) -> Vec<Region> {
         regions
             .iter()
-            .filter_map(|region| match scan {
-                Scan::Exact(_) => todo!(),
-                Scan::Unknown => {
-                    let base = region.BaseAddress as usize;
-                    match self.read_memory(base, region.RegionSize) {
-                        Ok(memory) => Some(Region {
-                            info: *region,
-                            locations: CandidateLocations::Dense {
-                                range: base..base + region.RegionSize,
-                            },
-                            value: Value::Any(memory),
-                        }),
-                        Err(_) => None,
+            .filter_map(|region| {
+                match self.read_memory(region.BaseAddress as _, region.RegionSize) {
+                    Ok(memory) => scan.run(*region, memory),
+                    Err(e) => {
+                        eprintln!(
+                            "    Failed to read {} bytes at {:?}: {e}",
+                            region.RegionSize, region.BaseAddress
+                        );
+                        None
                     }
                 }
-                Scan::Decreased => todo!(),
             })
             .collect()
     }
 
-    pub fn re_scan_regions(&self, regions: &[Region], scan: Scan) -> Vec<Region> {
+    pub fn re_scan_regions(&self, regions: Vec<Region>, scan: Scan) -> Vec<Region> {
         regions
-            .iter()
-            .filter_map(|region| match scan {
-                Scan::Exact(_) => todo!(),
-                Scan::Unknown => todo!(),
-                Scan::Decreased => {
-                    let mut locations = Vec::new();
-                    match &region.locations {
-                        CandidateLocations::Discrete { locations } => todo!(),
-                        CandidateLocations::Dense { range } => {
-                            match self.read_memory(range.start, range.len()) {
-                                Ok(memory) => match &region.value {
-                                    Value::Exact(_) => todo!(),
-                                    Value::Any(items) => {
-                                        memory
-                                            .chunks_exact(4)
-                                            .zip(items.chunks_exact(4))
-                                            .enumerate()
-                                            .for_each(|(offset, (chunk, prev))| {
-                                                let old = i32::from_ne_bytes([
-                                                    prev[0], prev[1], prev[2], prev[3],
-                                                ]);
-                                                let new = i32::from_ne_bytes([
-                                                    chunk[0], chunk[1], chunk[2], chunk[3],
-                                                ]);
-
-                                                if new < old {
-                                                    locations.push(
-                                                        range.start
-                                                            + offset
-                                                                * std::mem::size_of_val(&chunk),
-                                                    );
-                                                }
-                                            });
-                                        Some(Region {
-                                            info: region.info,
-                                            locations: CandidateLocations::Discrete { locations },
-                                            value: Value::Any(memory),
-                                        })
-                                    }
-                                },
-                                Err(e) => {
-                                    println!("Error reading memory: {e}");
-                                    None
-                                }
-                            }
-                        }
+            .into_iter()
+            .filter_map(|region| {
+                match self.read_memory(region.info.BaseAddress as _, region.info.RegionSize) {
+                    Ok(memory) => scan.rerun(region, memory),
+                    Err(e) => {
+                        eprintln!(
+                            "    Failed to read {} bytes at {:?}: {e}",
+                            region.info.RegionSize, region.info.BaseAddress
+                        );
+                        None
                     }
                 }
             })
@@ -354,11 +317,75 @@ impl CandidateLocations {
         }
     }
 }
+
+#[derive(Clone, Copy)]
 pub enum Scan {
     Exact(i32),
     Unknown,
     Decreased,
 }
+
+impl Scan {
+    pub fn run(
+        self,
+        info: winapi::um::winnt::MEMORY_BASIC_INFORMATION,
+        memory: Vec<u8>,
+    ) -> Option<Region> {
+        let base = info.BaseAddress as usize;
+        match self {
+            Scan::Exact(n) => {
+                let target = n.to_ne_bytes();
+                let locations = memory
+                    .chunks_exact(4)
+                    .enumerate()
+                    .filter_map(|(offset, chunk)| {
+                        if chunk == target {
+                            Some(base + offset * 4)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Some(Region {
+                    info,
+                    locations: CandidateLocations::Discrete { locations },
+                    value: Value::Exact(n),
+                })
+            }
+            Scan::Unknown => Some(Region {
+                info,
+                locations: CandidateLocations::Dense {
+                    range: base..base + info.RegionSize,
+                },
+                value: Value::Any(memory),
+            }),
+            Scan::Decreased => None,
+        }
+    }
+    pub fn rerun(self, region: Region, memory: Vec<u8>) -> Option<Region> {
+        match self {
+            Scan::Exact(_) => self.run(region.info, memory),
+            Scan::Unknown => Some(region),
+            Scan::Decreased => Some(Region {
+                info: region.info,
+                locations: CandidateLocations::Discrete {
+                    locations: {
+                        region
+                            .iter_location(&memory)
+                            .filter_map(
+                                |(addr, old, new)| {
+                                    if new < old { Some(addr) } else { None }
+                                },
+                            )
+                            .collect()
+                    },
+                },
+                value: Value::Any(memory),
+            }),
+        }
+    }
+}
+
 pub enum Value {
     Exact(i32),
     Any(Vec<u8>),
@@ -368,4 +395,49 @@ pub struct Region {
     pub info: winapi::um::winnt::MEMORY_BASIC_INFORMATION,
     pub locations: CandidateLocations,
     pub value: Value,
+}
+
+impl Region {
+    fn iter_location<'a>(
+        &'a self,
+        memory: &'a [u8],
+    ) -> Box<dyn Iterator<Item = (usize, i32, i32)> + 'a> {
+        match &self.locations {
+            CandidateLocations::Discrete { locations } => {
+                Box::new(locations.iter().map(move |&addr| {
+                    let old = self.value_at(addr);
+                    let base = addr - self.info.BaseAddress as usize;
+                    let bytes = &memory[base..base + 4];
+                    (
+                        addr,
+                        old,
+                        i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+                    )
+                }))
+            }
+            CandidateLocations::Dense { range } => {
+                Box::new(range.clone().step_by(4).map(move |addr| {
+                    let old = self.value_at(addr);
+
+                    let base = addr - self.info.BaseAddress as usize;
+                    let bytes = &memory[base..base + 4];
+
+                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+
+                    (addr, old, new)
+                }))
+            }
+        }
+    }
+
+    fn value_at(&self, addr: usize) -> i32 {
+        match self.value {
+            Value::Exact(v) => v,
+            Value::Any(ref chunk) => {
+                let base = addr - self.info.BaseAddress as usize;
+                let bytes = &chunk[base..base + 4];
+                i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+            }
+        }
+    }
 }
