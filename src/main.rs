@@ -1,4 +1,4 @@
-use std::{mem::MaybeUninit, ptr::NonNull};
+use std::{mem::MaybeUninit, ops::Range, ptr::NonNull};
 
 fn main() -> anyhow::Result<()> {
     enum_proc()?.into_iter().for_each(|pid| {
@@ -45,6 +45,19 @@ fn main() -> anyhow::Result<()> {
         .filter(|region| region.Protect & mask != 0)
         .collect();
     println!("  Memory Regions: {}", regions.len());
+
+    let scan = process.scan_regions(&regions, Scan::Unknown);
+    println!("  Scanned Regions: {}", scan.len());
+    println!(
+        "  Found {} locations",
+        scan.iter().map(|r| r.locations.len()).sum::<usize>()
+    );
+    std::thread::sleep(std::time::Duration::from_secs(10));
+    let last_scan = process.re_scan_regions(&scan, Scan::Decreased);
+    println!(
+        "Found {} locations",
+        last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
+    );
 
     let mut location = Vec::with_capacity(regions.len());
 
@@ -238,6 +251,87 @@ impl Process {
             Ok(written)
         }
     }
+
+    pub fn scan_regions(
+        &self,
+        regions: &[winapi::um::winnt::MEMORY_BASIC_INFORMATION],
+        scan: Scan,
+    ) -> Vec<Region> {
+        regions
+            .iter()
+            .filter_map(|region| match scan {
+                Scan::Exact(_) => todo!(),
+                Scan::Unknown => {
+                    let base = region.BaseAddress as usize;
+                    match self.read_memory(base, region.RegionSize) {
+                        Ok(memory) => Some(Region {
+                            info: *region,
+                            locations: CandidateLocations::Dense {
+                                range: base..base + region.RegionSize,
+                            },
+                            value: Value::Any(memory),
+                        }),
+                        Err(_) => None,
+                    }
+                }
+                Scan::Decreased => todo!(),
+            })
+            .collect()
+    }
+
+    pub fn re_scan_regions(&self, regions: &[Region], scan: Scan) -> Vec<Region> {
+        regions
+            .iter()
+            .filter_map(|region| match scan {
+                Scan::Exact(_) => todo!(),
+                Scan::Unknown => todo!(),
+                Scan::Decreased => {
+                    let mut locations = Vec::new();
+                    match &region.locations {
+                        CandidateLocations::Discrete { locations } => todo!(),
+                        CandidateLocations::Dense { range } => {
+                            match self.read_memory(range.start, range.len()) {
+                                Ok(memory) => match &region.value {
+                                    Value::Exact(_) => todo!(),
+                                    Value::Any(items) => {
+                                        memory
+                                            .chunks_exact(4)
+                                            .zip(items.chunks_exact(4))
+                                            .enumerate()
+                                            .for_each(|(offset, (chunk, prev))| {
+                                                let old = i32::from_ne_bytes([
+                                                    prev[0], prev[1], prev[2], prev[3],
+                                                ]);
+                                                let new = i32::from_ne_bytes([
+                                                    chunk[0], chunk[1], chunk[2], chunk[3],
+                                                ]);
+
+                                                if new < old {
+                                                    locations.push(
+                                                        range.start
+                                                            + offset
+                                                                * std::mem::size_of_val(&chunk),
+                                                    );
+                                                }
+                                            });
+                                        Some(Region {
+                                            info: region.info,
+                                            locations: CandidateLocations::Discrete { locations },
+                                            value: Value::Any(memory),
+                                        })
+                                    }
+                                },
+                                Err(e) => {
+                                    println!("Error reading memory: {e}");
+                                    None
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .collect()
+    }
 }
 
 impl Drop for Process {
@@ -246,4 +340,32 @@ impl Drop for Process {
             winapi::um::handleapi::CloseHandle(self.handle.as_ptr());
         }
     }
+}
+pub enum CandidateLocations {
+    Discrete { locations: Vec<usize> },
+    Dense { range: Range<usize> },
+}
+
+impl CandidateLocations {
+    pub fn len(&self) -> usize {
+        match self {
+            CandidateLocations::Discrete { locations } => locations.len(),
+            CandidateLocations::Dense { range } => range.len(),
+        }
+    }
+}
+pub enum Scan {
+    Exact(i32),
+    Unknown,
+    Decreased,
+}
+pub enum Value {
+    Exact(i32),
+    Any(Vec<u8>),
+}
+
+pub struct Region {
+    pub info: winapi::um::winnt::MEMORY_BASIC_INFORMATION,
+    pub locations: CandidateLocations,
+    pub value: Value,
 }
