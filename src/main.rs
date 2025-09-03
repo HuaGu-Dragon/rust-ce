@@ -1,4 +1,4 @@
-use std::{mem::MaybeUninit, ops::Range, ptr::NonNull};
+use std::{io::Write, mem::MaybeUninit, ops::Range, ptr::NonNull};
 
 fn main() -> anyhow::Result<()> {
     enum_proc()?.into_iter().for_each(|pid| {
@@ -45,23 +45,6 @@ fn main() -> anyhow::Result<()> {
         .filter(|region| region.Protect & mask != 0)
         .collect();
     println!("  Memory Regions: {}", regions.len());
-
-    let mut scan = process.scan_regions(&regions, Scan::Unknown);
-    println!("  Scanned Regions: {}", scan.len());
-    println!(
-        "  Found {} locations",
-        scan.iter().map(|r| r.locations.len()).sum::<usize>()
-    );
-
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        let last_scan = process.re_scan_regions(scan, Scan::Decreased);
-        println!(
-            "Found {} locations",
-            last_scan.iter().map(|r| r.locations.len()).sum::<usize>()
-        );
-        scan = last_scan;
-    }
 
     let mut location = Vec::with_capacity(regions.len());
 
@@ -326,6 +309,45 @@ pub enum Scan {
 }
 
 impl Scan {
+    pub fn new() -> anyhow::Result<Self> {
+        writeln!(std::io::stdout(), "scan (? for help)")?;
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        let mut input = String::new();
+        let scan = loop {
+            std::io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim();
+            match trimmed {
+                "u" => break Scan::Unknown,
+                "d" => break Scan::Decreased,
+                "h" => {
+                    writeln!(std::io::stdout(), "Help:")?;
+                    writeln!(std::io::stdout(), "(empty): exact value scan")?;
+                    writeln!(std::io::stdout(), "u: unknown value")?;
+                    writeln!(std::io::stdout(), "d: decreased value")?;
+                    writeln!(std::io::stdout(), "h: help")?;
+                    writeln!(std::io::stdout(), "")?;
+                    input.clear();
+                    continue;
+                }
+                _ => {
+                    let value = trimmed.parse::<i32>();
+                    match value {
+                        Ok(v) => {
+                            break Scan::Exact(v);
+                        }
+                        Err(_) => {
+                            writeln!(std::io::stdout(), "Invalid option {trimmed}")?;
+                            writeln!(std::io::stdout(), "scan (? for help)")?;
+                            input.clear();
+                            continue;
+                        }
+                    }
+                }
+            };
+        };
+        Ok(scan)
+    }
     pub fn run(
         self,
         info: winapi::um::winnt::MEMORY_BASIC_INFORMATION,
