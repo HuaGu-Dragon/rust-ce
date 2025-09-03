@@ -453,8 +453,8 @@ impl Scan {
             Scan::Unchanged => old == new,
             Scan::Changed => old != new,
             Scan::Range(low, high) => new >= *low && new <= *high,
-            Scan::DecreasedBy(amount) => new == old - *amount,
-            Scan::IncreasedBy(amount) => new == old + *amount,
+            Scan::DecreasedBy(amount) => new == old.wrapping_sub(*amount),
+            Scan::IncreasedBy(amount) => new == old.wrapping_add(*amount),
         }
     }
 }
