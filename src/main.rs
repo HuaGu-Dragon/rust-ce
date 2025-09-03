@@ -1,4 +1,4 @@
-use std::{io::Write, mem::MaybeUninit, ops::Range, ptr::NonNull};
+use std::{io::Write, mem::MaybeUninit, ops::Range, ptr::NonNull, str::FromStr};
 
 fn main() -> anyhow::Result<()> {
     enum_proc()?.into_iter().for_each(|pid| {
@@ -274,7 +274,34 @@ impl CandidateLocations {
 pub enum Scan {
     Exact(i32),
     Unknown,
+    Unchanged,
+    Changed,
     Decreased,
+    Increased,
+    DecreasedBy(i32),
+    IncreasedBy(i32),
+    Range(i32, i32),
+}
+
+impl FromStr for Scan {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.as_bytes()[0] {
+            b'u' => Ok(Scan::Unknown),
+            b'd' => Ok(Scan::Decreased),
+            b'i' => Ok(Scan::Increased),
+            b'=' => Ok(Scan::Unchanged),
+            b'~' => Ok(Scan::Changed),
+            _ => {
+                if let Some((low, high)) = s.split_once("..=") {
+                    Ok(Scan::Range(low.parse()?, high.parse()?))
+                } else {
+                    Ok(Scan::Exact(s.parse::<i32>()?))
+                }
+            }
+        }
+    }
 }
 
 impl Scan {
@@ -284,40 +311,33 @@ impl Scan {
 
         let mut input = String::new();
         let scan = loop {
+            write!(std::io::stdout(), "scan (? for help) >")?;
+            std::io::Write::flush(&mut std::io::stdout())?;
+            input.clear();
             std::io::stdin().read_line(&mut input)?;
             let trimmed = input.trim();
-            match trimmed {
-                "u" => break Scan::Unknown,
-                "d" => break Scan::Decreased,
-                "?" => {
-                    writeln!(std::io::stdout(), "Help:")?;
-                    writeln!(std::io::stdout(), "(empty): exact value scan")?;
-                    writeln!(std::io::stdout(), "u: unknown value")?;
-                    writeln!(std::io::stdout(), "d: decreased value")?;
-                    write!(std::io::stdout(), "scan (? for help) >")?;
-                    std::io::Write::flush(&mut std::io::stdout())?;
-                    input.clear();
-                    continue;
+            if trimmed.is_empty() {
+                writeln!(std::io::stdout(), "Please enter a value")?;
+            } else if trimmed == "?" {
+                let mut stdout = std::io::stdout().lock();
+                writeln!(stdout, "Help:")?;
+                writeln!(stdout, "(empty): exact value scan")?;
+                writeln!(stdout, "u: unknown value")?;
+                writeln!(stdout, "=: unchanged value")?;
+                writeln!(stdout, "~: changed value")?;
+                writeln!(stdout, "d: decreased value")?;
+                writeln!(stdout, "i: increased value")?;
+                writeln!(stdout, "low..=high: range scan")?;
+            } else {
+                match trimmed.parse() {
+                    Ok(value) => break value,
+                    Err(e) => writeln!(std::io::stdout(), "Invalid input: {e}")?,
                 }
-                _ => {
-                    let value = trimmed.parse::<i32>();
-                    match value {
-                        Ok(v) => {
-                            break Scan::Exact(v);
-                        }
-                        Err(_) => {
-                            writeln!(std::io::stdout(), "Invalid option {trimmed}")?;
-                            writeln!(std::io::stdout(), "scan (? for help) >")?;
-                            std::io::Write::flush(&mut std::io::stdout())?;
-                            input.clear();
-                            continue;
-                        }
-                    }
-                }
-            };
+            }
         };
         Ok(scan)
     }
+
     pub fn run(
         self,
         info: winapi::um::winnt::MEMORY_BASIC_INFORMATION,
@@ -344,6 +364,25 @@ impl Scan {
                     value: Value::Exact(n),
                 })
             }
+            Scan::Range(low, high) => {
+                let locations = memory
+                    .chunks_exact(4)
+                    .enumerate()
+                    .filter_map(|(offset, chunk)| {
+                        let value = i32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                        if value >= low && value <= high {
+                            Some(base + offset * 4)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Some(Region {
+                    info,
+                    locations: CandidateLocations::Discrete { locations },
+                    value: Value::Any(memory),
+                })
+            }
             Scan::Unknown => Some(Region {
                 info,
                 locations: CandidateLocations::Dense {
@@ -351,51 +390,31 @@ impl Scan {
                 },
                 value: Value::Any(memory),
             }),
-            Scan::Decreased => None,
+            Scan::DecreasedBy(_)
+            | Scan::IncreasedBy(_)
+            | Scan::Decreased
+            | Scan::Increased
+            | Scan::Unchanged
+            | Scan::Changed => None,
         }
     }
     pub fn rerun(self, region: Region, memory: Vec<u8>) -> Option<Region> {
         match self {
-            Scan::Exact(n) => {
+            Scan::Unknown => Some(region),
+            _ => {
                 let region = Region {
                     info: region.info,
                     locations: CandidateLocations::Discrete {
                         locations: {
                             region
                                 .iter_location(&memory)
-                                .filter_map(|(addr, _old, new)| {
-                                    println!("Rerunning scan at {addr:#x}: {_old} -> {new}");
-                                    if new == n {
-                                        println!("Found matching address: {addr:#x}");
+                                .filter_map(|(addr, old, new)| {
+                                    if self.acceptable(old, new) {
                                         Some(addr)
                                     } else {
                                         None
                                     }
                                 })
-                                .collect()
-                        },
-                    },
-                    value: Value::Exact(n),
-                };
-                if region.locations.len() == 0 {
-                    None
-                } else {
-                    Some(region)
-                }
-            }
-            Scan::Unknown => Some(region),
-            Scan::Decreased => {
-                let region = Region {
-                    info: region.info,
-                    locations: CandidateLocations::Discrete {
-                        locations: {
-                            region
-                                .iter_location(&memory)
-                                .filter_map(
-                                    |(addr, old, new)| {
-                                        if new < old { Some(addr) } else { None }
-                                    },
-                                )
                                 .collect()
                         },
                     },
@@ -408,6 +427,20 @@ impl Scan {
                     Some(region)
                 }
             }
+        }
+    }
+
+    pub fn acceptable(&self, old: i32, new: i32) -> bool {
+        match self {
+            Scan::Exact(n) => *n == new,
+            Scan::Unknown => true,
+            Scan::Decreased => new < old,
+            Scan::Increased => new > old,
+            Scan::Unchanged => old == new,
+            Scan::Changed => old != new,
+            Scan::Range(low, high) => new >= *low && new <= *high,
+            Scan::DecreasedBy(amount) => new == old - *amount,
+            Scan::IncreasedBy(amount) => new == old + *amount,
         }
     }
 }
