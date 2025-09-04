@@ -4,10 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::{
-    memory::{CandidateLocations, Region, Value},
-    scan,
-};
+use crate::memory::{CandidateLocations, Region, Value};
 
 pub unsafe trait Scannable {
     fn mem_view(&self) -> &[u8];
