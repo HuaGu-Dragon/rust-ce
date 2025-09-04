@@ -119,14 +119,14 @@ impl Process {
 
     pub fn scan_regions(
         &self,
-        regions: &[winapi::um::winnt::MEMORY_BASIC_INFORMATION],
+        regions: Vec<winapi::um::winnt::MEMORY_BASIC_INFORMATION>,
         scan: Scan,
     ) -> Vec<Region> {
         regions
-            .iter()
+            .into_iter()
             .filter_map(|region| {
                 match self.read_memory(region.BaseAddress as _, region.RegionSize) {
-                    Ok(memory) => scan.run(*region, memory),
+                    Ok(memory) => scan.run(region, memory),
                     Err(e) => {
                         eprintln!(
                             "    Failed to read {} bytes at {:?}: {e}",

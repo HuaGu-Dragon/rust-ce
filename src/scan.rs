@@ -92,32 +92,13 @@ impl Scan {
     ) -> Option<Region> {
         let base = info.BaseAddress as usize;
         match self {
-            Scan::Exact(n) => {
-                let target = n.to_ne_bytes();
-                let locations = memory
-                    .chunks_exact(4)
-                    .enumerate()
-                    .filter_map(|(offset, chunk)| {
-                        if chunk == target {
-                            Some(base + offset * 4)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                Some(Region {
-                    info,
-                    locations: CandidateLocations::Discrete { locations },
-                    value: Value::Exact(n),
-                })
-            }
-            Scan::Range(low, high) => {
+            scan @ (Scan::Exact(_) | Scan::Range(_, _)) => {
                 let locations = memory
                     .chunks_exact(4)
                     .enumerate()
                     .filter_map(|(offset, chunk)| {
                         let value = i32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                        if value >= low && value <= high {
+                        if self.acceptable(value, value) {
                             Some(base + offset * 4)
                         } else {
                             None
@@ -127,7 +108,11 @@ impl Scan {
                 Some(Region {
                     info,
                     locations: CandidateLocations::Discrete { locations },
-                    value: Value::Any(memory),
+                    value: if let Scan::Exact(v) = scan {
+                        Value::Exact(v)
+                    } else {
+                        Value::Any(memory)
+                    },
                 })
             }
             Scan::Unknown => Some(Region {

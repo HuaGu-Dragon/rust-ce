@@ -52,7 +52,7 @@ fn main() -> anyhow::Result<()> {
 
     let scan = Scan::new()?;
 
-    let mut locations = process.scan_regions(&regions, scan);
+    let mut locations = process.scan_regions(regions, scan);
 
     while locations.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
         println!(
