@@ -139,22 +139,19 @@ impl Process {
             .collect()
     }
 
-    pub fn re_scan_regions(&self, regions: Vec<Region>, scan: Scan) -> Vec<Region> {
-        regions
-            .into_iter()
-            .filter_map(|region| {
-                match self.read_memory(region.info.BaseAddress as _, region.info.RegionSize) {
-                    Ok(memory) => scan.rerun(region, memory),
-                    Err(e) => {
-                        eprintln!(
-                            "    Failed to read {} bytes at {:?}: {e}",
-                            region.info.RegionSize, region.info.BaseAddress
-                        );
-                        None
-                    }
+    pub fn re_scan_regions(&self, regions: &mut Vec<Region>, scan: Scan) {
+        regions.retain_mut(|region| {
+            match self.read_memory(region.info.BaseAddress as _, region.info.RegionSize) {
+                Ok(memory) => scan.rerun(region, memory),
+                Err(e) => {
+                    eprintln!(
+                        "    Failed to read {} bytes at {:?}: {e}",
+                        region.info.RegionSize, region.info.BaseAddress
+                    );
+                    false
                 }
-            })
-            .collect()
+            }
+        })
     }
 }
 

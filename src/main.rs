@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
             locations.iter().map(|r| r.locations.len()).sum::<usize>()
         );
         let scan = Scan::new()?;
-        locations = process.re_scan_regions(locations, scan);
+        process.re_scan_regions(&mut locations, scan);
     }
 
     let mut target = String::new();
