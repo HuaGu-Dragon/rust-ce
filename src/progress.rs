@@ -1,6 +1,9 @@
 use std::{mem::MaybeUninit, ptr::NonNull};
 
-use crate::{memory::Region, scan::Scan};
+use crate::{
+    memory::Region,
+    scan::{Scan, Scannable},
+};
 
 pub struct Process {
     pub pid: u32,
@@ -117,10 +120,10 @@ impl Process {
         }
     }
 
-    pub fn scan_regions(
+    pub fn scan_regions<T: Scannable>(
         &self,
         regions: Vec<winapi::um::winnt::MEMORY_BASIC_INFORMATION>,
-        scan: Scan,
+        scan: Scan<T>,
     ) -> Vec<Region> {
         regions
             .into_iter()
@@ -139,7 +142,7 @@ impl Process {
             .collect()
     }
 
-    pub fn re_scan_regions(&self, regions: &mut Vec<Region>, scan: Scan) {
+    pub fn re_scan_regions<T: Scannable>(&self, regions: &mut Vec<Region>, scan: Scan<T>) {
         regions.retain_mut(|region| {
             match self.read_memory(region.info.BaseAddress as _, region.info.RegionSize) {
                 Ok(memory) => scan.rerun(region, memory),

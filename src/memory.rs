@@ -1,19 +1,19 @@
 use std::ops::Range;
 
 pub enum Value {
-    Exact(i32),
-    Any(Vec<u8>),
+    Exact(Vec<u8>),
+    Any { memory: Vec<u8>, size: usize },
 }
 pub enum CandidateLocations {
     Discrete { locations: Vec<usize> },
-    Dense { range: Range<usize> },
+    Dense { range: Range<usize>, step: usize },
 }
 
 impl CandidateLocations {
     pub fn len(&self) -> usize {
         match self {
             CandidateLocations::Discrete { locations } => locations.len(),
-            CandidateLocations::Dense { range } => range.len(),
+            CandidateLocations::Dense { range, .. } => range.len(),
         }
     }
 
@@ -27,8 +27,11 @@ impl CandidateLocations {
     {
         match self {
             CandidateLocations::Discrete { locations } => locations.retain_mut(|addr| f(addr)),
-            CandidateLocations::Dense { range } => {
-                let locations = range.step_by(4).filter(|addr| f(addr)).collect::<Vec<_>>();
+            CandidateLocations::Dense { range, step } => {
+                let locations = range
+                    .step_by(*step)
+                    .filter(|addr| f(addr))
+                    .collect::<Vec<_>>();
                 *self = CandidateLocations::Discrete { locations };
             }
         }
@@ -45,8 +48,8 @@ impl<'a> IntoIterator for &'a CandidateLocations {
             CandidateLocations::Discrete { locations } => LocationIter {
                 iter: Box::new(locations.iter().map(|&x| x)),
             },
-            CandidateLocations::Dense { range } => LocationIter {
-                iter: Box::new(range.clone().step_by(4)),
+            CandidateLocations::Dense { range, step } => LocationIter {
+                iter: Box::new(range.clone().step_by(*step)),
             },
         }
     }
@@ -71,13 +74,10 @@ pub struct Region {
 }
 
 impl Region {
-    pub fn value_at(offset: usize, value: &Value) -> i32 {
+    pub fn value_at(offset: usize, value: &Value) -> &[u8] {
         match value {
-            Value::Exact(v) => *v,
-            Value::Any(chunk) => {
-                let bytes = &chunk[offset..offset + 4];
-                i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-            }
+            Value::Exact(v) => v,
+            Value::Any { memory, size } => &memory[offset..offset + size],
         }
     }
 }

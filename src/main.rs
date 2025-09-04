@@ -1,4 +1,4 @@
-use crate::{memory::CandidateLocations, progress::Process, scan::Scan};
+use crate::{memory::CandidateLocations, progress::Process};
 
 pub mod memory;
 pub mod progress;
@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
         .collect();
     println!("  Memory Regions: {}", regions.len());
 
-    let scan = Scan::new()?;
+    let scan = scan::build()?;
 
     let mut locations = process.scan_regions(regions, scan);
 
@@ -59,7 +59,7 @@ fn main() -> anyhow::Result<()> {
             "  Candidate Locations: {}",
             locations.iter().map(|r| r.locations.len()).sum::<usize>()
         );
-        let scan = Scan::new()?;
+        let scan = scan::build()?;
         process.re_scan_regions(&mut locations, scan);
     }
 

@@ -7,6 +7,7 @@
     "processthreadsapi",
     "psapi",
     "READWRITE",
+    "rsub",
     "winerror",
     "WRITECOPY"
   ]
