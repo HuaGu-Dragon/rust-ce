@@ -20,6 +20,19 @@ impl CandidateLocations {
     pub fn iter(&self) -> LocationIter {
         self.into_iter()
     }
+
+    pub fn retain_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&usize) -> bool,
+    {
+        match self {
+            CandidateLocations::Discrete { locations } => locations.retain_mut(|addr| f(addr)),
+            CandidateLocations::Dense { range } => {
+                let locations = range.step_by(4).filter(|addr| f(addr)).collect::<Vec<_>>();
+                *self = CandidateLocations::Discrete { locations };
+            }
+        }
+    }
 }
 
 impl<'a> IntoIterator for &'a CandidateLocations {
@@ -39,22 +52,6 @@ impl<'a> IntoIterator for &'a CandidateLocations {
     }
 }
 
-impl IntoIterator for CandidateLocations {
-    type Item = usize;
-
-    type IntoIter = LocationIter<'static>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            CandidateLocations::Discrete { locations } => LocationIter {
-                iter: Box::new(locations.into_iter()),
-            },
-            CandidateLocations::Dense { range } => LocationIter {
-                iter: Box::new(range.into_iter().step_by(4)),
-            },
-        }
-    }
-}
 pub struct LocationIter<'a> {
     iter: Box<dyn Iterator<Item = usize> + 'a>,
 }
@@ -74,39 +71,11 @@ pub struct Region {
 }
 
 impl Region {
-    // pub fn iter_location<'a>(
-    //     &'a self,
-    //     memory: &'a [u8],
-    // ) -> Box<dyn Iterator<Item = (usize, i32, i32)> + 'a> {
-    //     match &self.locations {
-    //         CandidateLocations::Discrete { locations } => Box::new(locations.iter().map(|&addr| {
-    //             let old = self.value_at(addr);
-    //             let base = addr - self.info.BaseAddress as usize;
-    //             let bytes = &memory[base..base + 4];
-    //             (
-    //                 addr,
-    //                 old,
-    //                 i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-    //             )
-    //         })),
-    //         CandidateLocations::Dense { range } => Box::new(range.clone().step_by(4).map(|addr| {
-    //             let old = self.value_at(addr);
-
-    //             let base = addr - self.info.BaseAddress as usize;
-    //             let bytes = &memory[base..base + 4];
-
-    //             let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-
-    //             (addr, old, new)
-    //         })),
-    //     }
-    // }
-
-    pub fn value_at(addr: usize, value: &Value) -> i32 {
+    pub fn value_at(offset: usize, value: &Value) -> i32 {
         match value {
             Value::Exact(v) => *v,
             Value::Any(chunk) => {
-                let bytes = &chunk[addr..addr + 4];
+                let bytes = &chunk[offset..offset + 4];
                 i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
             }
         }

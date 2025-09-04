@@ -134,26 +134,17 @@ impl Scan {
         match self {
             Scan::Unknown => true,
             _ => {
-                let locations = region
-                    .locations
-                    .iter()
-                    .filter_map(|addr| {
-                        let base = addr - region.info.BaseAddress as usize;
-                        let bytes = &memory[base..base + 4];
-                        let old = Region::value_at(base, &region.value);
-                        let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                        if self.acceptable(old, new) {
-                            Some(addr)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                if locations.len() == 0 {
+                region.locations.retain_mut(|addr| {
+                    let offset = addr - region.info.BaseAddress as usize;
+                    let bytes = &memory[offset..offset + 4];
+                    let old = Region::value_at(offset, &region.value);
+                    let new = i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    self.acceptable(old, new)
+                });
+                if region.locations.len() == 0 {
                     false
                 } else {
                     region.value = Value::Any(memory);
-                    region.locations = CandidateLocations::Discrete { locations };
                     true
                 }
             }
