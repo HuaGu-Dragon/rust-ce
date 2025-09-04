@@ -63,14 +63,20 @@ fn main() -> anyhow::Result<()> {
         process.re_scan_regions(&mut locations, scan);
     }
 
-    let mut target = String::new();
-    print!("Write new value: ");
-    std::io::Write::flush(&mut std::io::stdout())?;
-    std::io::stdin().read_line(&mut target)?;
-    let target = target.trim().parse::<i32>()?.to_ne_bytes();
+    let target = loop {
+        match scan::write()? {
+            scan::Scan::Exact(v) => break v,
+            _ => {
+                println!("Please enter an exact value to write.");
+                continue;
+            }
+        }
+    };
+
     match locations[0].locations {
         CandidateLocations::Discrete { ref locations } => {
-            process.write_memory(locations[0], &target)?;
+            let n = process.write_memory(locations[0], target.mem_view())?;
+            println!("Written {} bytes to address: [{:x}]", n, locations[0]);
         }
         _ => anyhow::bail!("Unexpected candidate locations"),
     }

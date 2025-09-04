@@ -4,7 +4,10 @@ use std::{
     str::FromStr,
 };
 
-use crate::memory::{CandidateLocations, Region, Value};
+use crate::{
+    memory::{CandidateLocations, Region, Value},
+    scan,
+};
 
 pub unsafe trait Scannable {
     fn mem_view(&self) -> &[u8];
@@ -212,6 +215,29 @@ pub fn build() -> anyhow::Result<Scan<Box<dyn Scannable>>> {
     Ok(scan)
 }
 
+pub fn write() -> anyhow::Result<Scan<Box<dyn Scannable>>> {
+    let mut input = String::new();
+
+    let scan = loop {
+        write!(stdout(), "New Value > ")?;
+        std::io::Write::flush(&mut std::io::stdout())?;
+        input.clear();
+
+        std::io::stdin().read_line(&mut input)?;
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            writeln!(stdout(), "Please enter a value")?;
+        } else {
+            match trimmed.parse() {
+                Ok(value) => break value,
+                Err(e) => writeln!(std::io::stdout(), "Invalid input: {e}")?,
+            }
+        }
+    };
+
+    Ok(scan)
+}
+
 impl<T: Scannable> Scan<T> {
     pub fn run(
         &self,
@@ -222,7 +248,7 @@ impl<T: Scannable> Scan<T> {
         match self {
             scan @ (Scan::Exact(n) | Scan::Range(n, _)) => {
                 let target = n.mem_view();
-                let locations = memory
+                let locations: Vec<usize> = memory
                     .chunks_exact(target.len())
                     .enumerate()
                     .filter_map(|(offset, chunk)| {
@@ -233,6 +259,9 @@ impl<T: Scannable> Scan<T> {
                         }
                     })
                     .collect();
+                if locations.is_empty() {
+                    return None;
+                }
                 Some(Region {
                     info,
                     locations: CandidateLocations::Discrete { locations },
