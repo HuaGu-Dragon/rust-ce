@@ -1,5 +1,6 @@
 use crate::{memory::CandidateLocations, progress::Process};
 
+pub mod debug;
 pub mod memory;
 pub mod progress;
 pub mod scan;

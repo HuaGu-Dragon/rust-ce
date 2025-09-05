@@ -3,7 +3,7 @@
 - [x] Part 1: Introduction
 - [x] Part 2: Exact Value scanning
 - [x] Part 3: Unknown initial value
-- [ ] Part 4: Floating points
+- [] Part 4: Floating points
 - [ ] Part 5: Code finder
 - [ ] Part 6: Pointers
 - [ ] Part 7: Code Injection
