@@ -60,7 +60,7 @@ pub struct ProcessThread {
 impl ProcessThread {
     pub fn open(tid: u32) -> anyhow::Result<Self> {
         match NonNull::new(unsafe {
-            winapi::um::processthreadsapi::OpenProcess(
+            winapi::um::processthreadsapi::OpenThread(
                 winapi::um::winnt::THREAD_SUSPEND_RESUME,
                 winapi::shared::minwindef::FALSE,
                 tid,
@@ -69,6 +69,10 @@ impl ProcessThread {
             Some(handle) => Ok(ProcessThread { tid, handle }),
             None => Err(std::io::Error::last_os_error().into()),
         }
+    }
+
+    pub fn id(&self) -> u32 {
+        self.tid
     }
 
     pub fn suspend(&mut self) -> anyhow::Result<usize> {

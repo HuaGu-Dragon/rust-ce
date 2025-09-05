@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use crate::{memory::CandidateLocations, progress::Process};
 
 pub mod debug;
@@ -40,7 +42,28 @@ fn main() -> anyhow::Result<()> {
         };
     };
 
-    dbg!(debug::enum_threads(process.pid)?);
+    dbg!(debug::enum_threads(process.pid).context("dbg enum threads")?);
+
+    let threads: anyhow::Result<Vec<debug::ProcessThread>> = debug::enum_threads(process.pid)
+        .context("iter threads")?
+        .into_iter()
+        .map(debug::ProcessThread::open)
+        .collect();
+
+    threads
+        .context("collect threads")?
+        .iter_mut()
+        .for_each(|t| {
+            match t.suspend() {
+                Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
+                Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            match t.resume() {
+                Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
+                Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
+            }
+        });
 
     let mask = winapi::um::winnt::PAGE_EXECUTE_READWRITE
         | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
