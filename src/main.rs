@@ -70,15 +70,15 @@ fn main() -> anyhow::Result<()> {
             process.re_scan_regions(&mut locations, scan);
         }
 
-        let target = loop {
-            match scan::write()? {
-                scan::Scan::Exact(v) => break v,
-                _ => {
-                    println!("Please enter an exact value to write.");
-                    continue;
-                }
-            }
-        };
+        // let target = loop {
+        //     match scan::write()? {
+        //         scan::Scan::Exact(v) => break v,
+        //         _ => {
+        //             println!("Please enter an exact value to write.");
+        //             continue;
+        //         }
+        //     }
+        // };
 
         let address = match locations[0].locations {
             CandidateLocations::Discrete { ref locations } => locations[0],
@@ -93,33 +93,30 @@ fn main() -> anyhow::Result<()> {
             .map(thread::ProcessThread::open)
             .collect();
 
-        threads
-            .context("collect threads")?
-            .iter_mut()
-            .for_each(|t| {
-                match t.suspend() {
-                    Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
-                    Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
+        threads?.iter_mut().for_each(|t| {
+            match t.suspend() {
+                Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
+                Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
+            }
+            match t.get_context() {
+                Ok(context) => {
+                    println!("Dr0: {:016x}", context.Dr0);
+                    println!("Dr7: {:016x}", context.Dr7);
+                    println!("Dr6: {:016x}", context.Dr6);
+                    println!("Rax: {:016x}", context.Rax);
+                    println!("Rbx: {:016x}", context.Rbx);
+                    println!("Rcx: {:016x}", context.Rcx);
+                    println!("Rip: {:016x}", context.Rip);
                 }
-                match t.get_context() {
-                    Ok(context) => {
-                        println!("Dr0: {:016x}", context.Dr0);
-                        println!("Dr7: {:016x}", context.Dr7);
-                        println!("Dr6: {:016x}", context.Dr6);
-                        println!("Rax: {:016x}", context.Rax);
-                        println!("Rbx: {:016x}", context.Rbx);
-                        println!("Rcx: {:016x}", context.Rcx);
-                        println!("Rip: {:016x}", context.Rip);
-                    }
-                    Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
-                }
-                t.watch_memory_write(address).expect("watch memory write");
+                Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
+            }
+            t.watch_memory_write(address).expect("watch memory write");
 
-                match t.resume() {
-                    Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
-                    Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
-                }
-            });
+            match t.resume() {
+                Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
+                Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
+            }
+        });
         let debugger = DebugToken::debug(process.pid).context("debug token")?;
         for _ in 0..100 {
             let event = debugger.wait_event(None).context("wait event")?;
@@ -145,17 +142,71 @@ fn main() -> anyhow::Result<()> {
                     "Exception Information: {:?}",
                     info.ExceptionRecord.ExceptionInformation
                 );
+                if info.ExceptionRecord.ExceptionCode
+                    == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP
+                {
+                    let addr = info.ExceptionRecord.ExceptionAddress as usize;
+                    match process.read_memory(addr - 10, 20) {
+                        Ok(bytes) => println!("Inst context: {:02x?}", bytes),
+                        Err(e) => {
+                            eprintln!("Fail to read instruction context: {e}")
+                        }
+                    }
+                    match process.read_memory(addr - 6, 6) {
+                        Ok(bytes) => println!("Inst context: {:02x?}", bytes),
+                        Err(e) => {
+                            eprintln!("Fail to read instruction context: {e}")
+                        }
+                    }
+                    match process.write_memory(addr - 6, &[0x90, 0x90, 0x90, 0x90, 0x90, 0x90]) {
+                        Ok(_) => eprintln!("Patch [{:x}] with NOP", addr),
+                        Err(e) => eprintln!("Fail to patch [{:x}] with NOP: {e}", addr),
+                    }
+                    process.flush_cache()?;
+                    debugger.continue_event(event)?;
+                    break;
+                }
             }
             debugger.continue_event(event).context("continue event")?;
         }
+        let threads: anyhow::Result<Vec<thread::ProcessThread>> = debug::enum_threads(process.pid)
+            .context("iter threads")?
+            .into_iter()
+            .map(thread::ProcessThread::open)
+            .collect();
 
-        match locations[0].locations {
-            CandidateLocations::Discrete { ref locations } => {
-                let n = process.write_memory(locations[0], target.mem_view())?;
-                println!("Written {} bytes to address: [{:x}]", n, locations[0]);
+        threads?.iter_mut().for_each(|t| {
+            match t.suspend() {
+                Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
+                Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
             }
-            _ => anyhow::bail!("Unexpected candidate locations"),
-        }
+            t.cancel().expect("remove Dr0 and Dr7");
+            match t.get_context() {
+                Ok(context) => {
+                    println!("Dr0: {:016x}", context.Dr0);
+                    println!("Dr7: {:016x}", context.Dr7);
+                    println!("Dr6: {:016x}", context.Dr6);
+                    println!("Rax: {:016x}", context.Rax);
+                    println!("Rbx: {:016x}", context.Rbx);
+                    println!("Rcx: {:016x}", context.Rcx);
+                    println!("Rip: {:016x}", context.Rip);
+                }
+                Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
+            }
+
+            match t.resume() {
+                Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
+                Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
+            }
+        });
+
+        // match locations[0].locations {
+        //     CandidateLocations::Discrete { ref locations } => {
+        //         let n = process.write_memory(locations[0], target.mem_view())?;
+        //         println!("Written {} bytes to address: [{:x}]", n, locations[0]);
+        //     }
+        //     _ => anyhow::bail!("Unexpected candidate locations"),
+        // }
 
         input.clear();
         print!("Do you want to write again? (y/n): ");

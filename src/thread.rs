@@ -85,6 +85,13 @@ impl ProcessThread {
         context.Dr7 = 0x00000000000d0001;
         self.set_context(context)
     }
+
+    pub fn cancel(&self) -> anyhow::Result<()> {
+        let mut context = self.get_context()?;
+        context.Dr0 = 0;
+        context.Dr7 = 0;
+        self.set_context(context)
+    }
 }
 
 impl Drop for ProcessThread {

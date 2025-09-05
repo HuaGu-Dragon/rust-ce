@@ -156,6 +156,21 @@ impl Process {
             }
         })
     }
+
+    pub fn flush_cache(&self) -> anyhow::Result<()> {
+        if unsafe {
+            winapi::um::processthreadsapi::FlushInstructionCache(
+                self.handle.as_ptr(),
+                std::ptr::null(),
+                0,
+            )
+        } == winapi::shared::minwindef::FALSE
+        {
+            Err(std::io::Error::last_os_error().into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Drop for Process {
