@@ -85,6 +85,8 @@ fn main() -> anyhow::Result<()> {
             _ => anyhow::bail!("Unexpected candidate locations"),
         };
 
+        println!("Target Address: {:x}", address);
+
         let threads: anyhow::Result<Vec<thread::ProcessThread>> = debug::enum_threads(process.pid)
             .context("iter threads")?
             .into_iter()
@@ -122,6 +124,28 @@ fn main() -> anyhow::Result<()> {
         for _ in 0..100 {
             let event = debugger.wait_event(None).context("wait event")?;
             println!("Debug Event: {:?}", event.dwDebugEventCode);
+            if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
+                let info = unsafe { event.u.Exception() };
+                println!("First Chance: {}", info.dwFirstChance);
+                println!("Exception Code: {:x}", info.ExceptionRecord.ExceptionCode);
+                println!("Exception Flags: {:x}", info.ExceptionRecord.ExceptionFlags);
+                println!(
+                    "Exception Record: {:x}",
+                    info.ExceptionRecord.ExceptionRecord as usize
+                );
+                println!(
+                    "Exception Address: {:x}",
+                    info.ExceptionRecord.ExceptionAddress as usize
+                );
+                println!(
+                    "Number Parameters: {}",
+                    info.ExceptionRecord.NumberParameters
+                );
+                println!(
+                    "Exception Information: {:?}",
+                    info.ExceptionRecord.ExceptionInformation
+                );
+            }
             debugger.continue_event(event).context("continue event")?;
         }
 
