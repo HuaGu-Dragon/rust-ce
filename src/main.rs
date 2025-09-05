@@ -1,11 +1,12 @@
 use anyhow::Context;
 
-use crate::{memory::CandidateLocations, progress::Process};
+use crate::{debug::DebugToken, memory::CandidateLocations, progress::Process};
 
 pub mod debug;
 pub mod memory;
 pub mod progress;
 pub mod scan;
+pub mod thread;
 
 fn main() -> anyhow::Result<()> {
     enum_proc()?.into_iter().for_each(|pid| {
@@ -44,40 +45,6 @@ fn main() -> anyhow::Result<()> {
 
     dbg!(debug::enum_threads(process.pid).context("dbg enum threads")?);
 
-    let threads: anyhow::Result<Vec<debug::ProcessThread>> = debug::enum_threads(process.pid)
-        .context("iter threads")?
-        .into_iter()
-        .map(debug::ProcessThread::open)
-        .collect();
-
-    threads
-        .context("collect threads")?
-        .iter_mut()
-        .for_each(|t| {
-            match t.suspend() {
-                Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
-                Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            match t.get_context() {
-                Ok(context) => {
-                    println!("Dr0: {:016x}", context.Dr0);
-                    println!("Dr7: {:016x}", context.Dr7);
-                    println!("Dr6: {:016x}", context.Dr6);
-                    println!("Rax: {:016x}", context.Rax);
-                    println!("Rbx: {:016x}", context.Rbx);
-                    println!("Rcx: {:016x}", context.Rcx);
-                    println!("Rip: {:016x}", context.Rip);
-                }
-                Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
-            }
-
-            match t.resume() {
-                Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
-                Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
-            }
-        });
-
     let mask = winapi::um::winnt::PAGE_EXECUTE_READWRITE
         | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
         | winapi::um::winnt::PAGE_READWRITE
@@ -112,6 +79,51 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         };
+
+        let address = match locations[0].locations {
+            CandidateLocations::Discrete { ref locations } => locations[0],
+            _ => anyhow::bail!("Unexpected candidate locations"),
+        };
+
+        let threads: anyhow::Result<Vec<thread::ProcessThread>> = debug::enum_threads(process.pid)
+            .context("iter threads")?
+            .into_iter()
+            .map(thread::ProcessThread::open)
+            .collect();
+
+        threads
+            .context("collect threads")?
+            .iter_mut()
+            .for_each(|t| {
+                match t.suspend() {
+                    Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
+                    Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
+                }
+                match t.get_context() {
+                    Ok(context) => {
+                        println!("Dr0: {:016x}", context.Dr0);
+                        println!("Dr7: {:016x}", context.Dr7);
+                        println!("Dr6: {:016x}", context.Dr6);
+                        println!("Rax: {:016x}", context.Rax);
+                        println!("Rbx: {:016x}", context.Rbx);
+                        println!("Rcx: {:016x}", context.Rcx);
+                        println!("Rip: {:016x}", context.Rip);
+                    }
+                    Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
+                }
+                t.watch_memory_write(address).expect("watch memory write");
+
+                match t.resume() {
+                    Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
+                    Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
+                }
+            });
+        let debugger = DebugToken::debug(process.pid).context("debug token")?;
+        for _ in 0..100 {
+            let event = debugger.wait_event(None).context("wait event")?;
+            println!("Debug Event: {:?}", event.dwDebugEventCode);
+            debugger.continue_event(event).context("continue event")?;
+        }
 
         match locations[0].locations {
             CandidateLocations::Discrete { ref locations } => {

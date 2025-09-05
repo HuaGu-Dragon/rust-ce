@@ -1,6 +1,7 @@
 {
   "cSpell.words": [
     "ctypes",
+    "debugapi",
     "handleapi",
     "memoryapi",
     "minwindef",
@@ -12,6 +13,7 @@
     "THREADENTRY",
     "tlhelp",
     "Toolhelp",
+    "winbase",
     "winerror",
     "WRITECOPY"
   ]
