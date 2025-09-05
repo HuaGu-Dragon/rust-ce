@@ -1,5 +1,7 @@
 use std::{mem::MaybeUninit, ptr::NonNull};
 
+use anyhow::Context;
+
 pub struct ProcessThread {
     tid: u32,
     handle: NonNull<winapi::ctypes::c_void>,
@@ -66,10 +68,13 @@ impl ProcessThread {
     }
 
     pub fn set_context(&self, context: winapi::um::winnt::CONTEXT) -> anyhow::Result<()> {
+        #[repr(align(16))]
+        struct AlignedContext(winapi::um::winnt::CONTEXT);
+        let context = AlignedContext(context);
         if unsafe {
             winapi::um::processthreadsapi::SetThreadContext(
                 self.handle.as_ptr(),
-                &raw const context,
+                &raw const context.0,
             )
         } == winapi::shared::minwindef::FALSE
         {
@@ -87,10 +92,10 @@ impl ProcessThread {
     }
 
     pub fn cancel(&self) -> anyhow::Result<()> {
-        let mut context = self.get_context()?;
+        let mut context = self.get_context().context("get thread context")?;
         context.Dr0 = 0;
         context.Dr7 = 0;
-        self.set_context(context)
+        self.set_context(context).context("set thread context")
     }
 }
 

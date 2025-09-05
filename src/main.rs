@@ -111,7 +111,6 @@ fn main() -> anyhow::Result<()> {
                 Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
             }
             t.watch_memory_write(address).expect("watch memory write");
-
             match t.resume() {
                 Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
                 Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
@@ -152,13 +151,17 @@ fn main() -> anyhow::Result<()> {
                             eprintln!("Fail to read instruction context: {e}")
                         }
                     }
-                    match process.read_memory(addr - 6, 6) {
-                        Ok(bytes) => println!("Inst context: {:02x?}", bytes),
-                        Err(e) => {
-                            eprintln!("Fail to read instruction context: {e}")
-                        }
-                    }
-                    match process.write_memory(addr - 6, &[0x90, 0x90, 0x90, 0x90, 0x90, 0x90]) {
+                    input.clear();
+                    println!("input (offset len)> ");
+                    std::io::stdin().read_line(&mut input)?;
+                    let s = input.trim();
+                    let Some((offset, len)) = s.split_once(' ') else {
+                        anyhow::bail!("invalid input")
+                    };
+                    let offset = offset.trim().parse::<usize>()?;
+                    let len = len.trim().parse::<usize>()?;
+                    let value = vec![0x90; len];
+                    match process.write_memory(addr - offset, &value) {
                         Ok(_) => eprintln!("Patch [{:x}] with NOP", addr),
                         Err(e) => eprintln!("Fail to patch [{:x}] with NOP: {e}", addr),
                     }
@@ -180,7 +183,13 @@ fn main() -> anyhow::Result<()> {
                 Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
                 Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
             }
-            t.cancel().expect("remove Dr0 and Dr7");
+            match t.cancel() {
+                Ok(_) => println!("Success remove hardware breakpoint for thread {}", t.id()),
+                Err(e) => eprintln!(
+                    "Failed to remove hardware breakpoint for thread {}: {e}",
+                    t.id()
+                ),
+            }
             match t.get_context() {
                 Ok(context) => {
                     println!("Dr0: {:016x}", context.Dr0);
