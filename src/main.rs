@@ -58,7 +58,20 @@ fn main() -> anyhow::Result<()> {
                 Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
                 Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
             }
-            std::thread::sleep(std::time::Duration::from_secs(10));
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            match t.get_context() {
+                Ok(context) => {
+                    println!("Dr0: {:016x}", context.Dr0);
+                    println!("Dr7: {:016x}", context.Dr7);
+                    println!("Dr6: {:016x}", context.Dr6);
+                    println!("Rax: {:016x}", context.Rax);
+                    println!("Rbx: {:016x}", context.Rbx);
+                    println!("Rcx: {:016x}", context.Rcx);
+                    println!("Rip: {:016x}", context.Rip);
+                }
+                Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
+            }
+
             match t.resume() {
                 Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
                 Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
