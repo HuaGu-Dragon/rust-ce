@@ -43,42 +43,52 @@ fn main() -> anyhow::Result<()> {
         | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
         | winapi::um::winnt::PAGE_READWRITE
         | winapi::um::winnt::PAGE_WRITECOPY;
-    let regions: Vec<_> = process
-        .memory_region()
-        .into_iter()
-        .filter(|region| region.Protect & mask != 0)
-        .collect();
-    println!("  Memory Regions: {}", regions.len());
+    loop {
+        let regions: Vec<_> = process
+            .memory_region()
+            .into_iter()
+            .filter(|region| region.Protect & mask != 0)
+            .collect();
+        println!("  Memory Regions: {}", regions.len());
 
-    let scan = scan::build()?;
-
-    let mut locations = process.scan_regions(regions, scan);
-
-    while locations.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
-        println!(
-            "  Candidate Locations: {}",
-            locations.iter().map(|r| r.locations.len()).sum::<usize>()
-        );
         let scan = scan::build()?;
-        process.re_scan_regions(&mut locations, scan);
-    }
 
-    let target = loop {
-        match scan::write()? {
-            scan::Scan::Exact(v) => break v,
-            _ => {
-                println!("Please enter an exact value to write.");
-                continue;
+        let mut locations = process.scan_regions(regions, scan);
+
+        while locations.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
+            println!(
+                "  Candidate Locations: {}",
+                locations.iter().map(|r| r.locations.len()).sum::<usize>()
+            );
+            let scan = scan::build()?;
+            process.re_scan_regions(&mut locations, scan);
+        }
+
+        let target = loop {
+            match scan::write()? {
+                scan::Scan::Exact(v) => break v,
+                _ => {
+                    println!("Please enter an exact value to write.");
+                    continue;
+                }
             }
-        }
-    };
+        };
 
-    match locations[0].locations {
-        CandidateLocations::Discrete { ref locations } => {
-            let n = process.write_memory(locations[0], target.mem_view())?;
-            println!("Written {} bytes to address: [{:x}]", n, locations[0]);
+        match locations[0].locations {
+            CandidateLocations::Discrete { ref locations } => {
+                let n = process.write_memory(locations[0], target.mem_view())?;
+                println!("Written {} bytes to address: [{:x}]", n, locations[0]);
+            }
+            _ => anyhow::bail!("Unexpected candidate locations"),
         }
-        _ => anyhow::bail!("Unexpected candidate locations"),
+
+        input.clear();
+        print!("Do you want to write again? (y/n): ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            break;
+        }
     }
     Ok(())
 }
