@@ -8,6 +8,10 @@
     "psapi",
     "READWRITE",
     "rsub",
+    "SNAPTHREAD",
+    "THREADENTRY",
+    "tlhelp",
+    "Toolhelp",
     "winerror",
     "WRITECOPY"
   ]

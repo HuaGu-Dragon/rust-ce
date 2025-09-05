@@ -40,6 +40,8 @@ fn main() -> anyhow::Result<()> {
         };
     };
 
+    dbg!(debug::enum_threads(process.pid)?);
+
     let mask = winapi::um::winnt::PAGE_EXECUTE_READWRITE
         | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
         | winapi::um::winnt::PAGE_READWRITE
