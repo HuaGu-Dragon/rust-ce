@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.99"
+iced-x86 = "1.21.0"
 winapi = { version = "0.3.9", features = ["debugapi", "handleapi", "memoryapi", "processthreadsapi", "psapi", "tlhelp32", "winbase"] }

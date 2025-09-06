@@ -1,4 +1,5 @@
 use anyhow::Context;
+use iced_x86::{Decoder, DecoderOptions};
 
 use crate::{debug::DebugToken, memory::CandidateLocations, progress::Process};
 
@@ -117,9 +118,8 @@ fn main() -> anyhow::Result<()> {
             }
         });
         let debugger = DebugToken::debug(process.pid).context("debug token")?;
-        for _ in 0..100 {
+        loop {
             let event = debugger.wait_event(None).context("wait event")?;
-            println!("Debug Event: {:?}", event.dwDebugEventCode);
             if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
                 let info = unsafe { event.u.Exception() };
                 println!("First Chance: {}", info.dwFirstChance);
@@ -144,27 +144,68 @@ fn main() -> anyhow::Result<()> {
                 if info.ExceptionRecord.ExceptionCode
                     == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP
                 {
-                    let addr = info.ExceptionRecord.ExceptionAddress as usize;
-                    match process.read_memory(addr - 10, 20) {
-                        Ok(bytes) => println!("Inst context: {bytes:02x?}"),
-                        Err(e) => {
-                            eprintln!("Fail to read instruction context: {e}")
+                    // let addr = info.ExceptionRecord.ExceptionAddress as usize;
+                    // match process.read_memory(addr - 10, 20) {
+                    //     Ok(bytes) => println!("Inst context: {bytes:02x?}"),
+                    //     Err(e) => {
+                    //         eprintln!("Fail to read instruction context: {e}")
+                    //     }
+                    // }
+                    // input.clear();
+                    // println!("input (offset len)> ");
+                    // std::io::stdin().read_line(&mut input)?;
+                    // let s = input.trim();
+                    // let Some((offset, len)) = s.split_once(' ') else {
+                    //     anyhow::bail!("invalid input")
+                    // };
+                    // let offset = offset.trim().parse::<usize>()?;
+                    // let len = len.trim().parse::<usize>()?;
+                    // let value = vec![0x90; len];
+                    // match process.write_memory(addr - 10 + offset, &value) {
+                    //     Ok(_) => eprintln!("Patch [{addr:x}] with NOP"),
+                    //     Err(e) => eprintln!("Fail to patch [{addr:x}] with NOP: {e}"),
+                    // }
+                    let region = process
+                        .memory_region()
+                        .into_iter()
+                        .find(|region| {
+                            let base = region.BaseAddress as usize;
+                            let target = info.ExceptionRecord.ExceptionAddress as usize;
+                            base <= target && target <= base + region.RegionSize
+                        })
+                        .ok_or_else(|| anyhow::anyhow!("not matching region found!"))?;
+
+                    println!(
+                        "ExceptionAddress: {:x}",
+                        info.ExceptionRecord.ExceptionAddress as usize
+                    );
+                    println!(
+                        "Region: 0x{:x}-0x{:x}",
+                        region.BaseAddress as usize,
+                        region.BaseAddress as usize + region.RegionSize
+                    );
+
+                    let bytes =
+                        process.read_memory(region.BaseAddress as usize, region.RegionSize)?;
+
+                    let mut decoder = Decoder::with_ip(
+                        64,
+                        &bytes,
+                        region.BaseAddress as u64,
+                        DecoderOptions::NONE,
+                    );
+
+                    let mut instruction = iced_x86::Instruction::default();
+                    while decoder.can_decode() {
+                        decoder.decode_out(&mut instruction);
+                        if instruction.next_ip() == info.ExceptionRecord.ExceptionAddress as u64 {
+                            println!("Instruction: {instruction}");
+                            let value = vec![0x90; instruction.len()];
+                            process.write_memory(instruction.ip() as usize, &value)?;
+                            break;
                         }
                     }
-                    input.clear();
-                    println!("input (offset len)> ");
-                    std::io::stdin().read_line(&mut input)?;
-                    let s = input.trim();
-                    let Some((offset, len)) = s.split_once(' ') else {
-                        anyhow::bail!("invalid input")
-                    };
-                    let offset = offset.trim().parse::<usize>()?;
-                    let len = len.trim().parse::<usize>()?;
-                    let value = vec![0x90; len];
-                    match process.write_memory(addr - 10 + offset, &value) {
-                        Ok(_) => eprintln!("Patch [{addr:x}] with NOP"),
-                        Err(e) => eprintln!("Fail to patch [{addr:x}] with NOP: {e}"),
-                    }
+
                     process.flush_cache()?;
                     debugger.continue_event(event)?;
                     break;
