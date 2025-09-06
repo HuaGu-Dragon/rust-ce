@@ -44,8 +44,6 @@ fn main() -> anyhow::Result<()> {
         };
     };
 
-    dbg!(debug::enum_threads(process.pid).context("dbg enum threads")?);
-
     let mask = winapi::um::winnt::PAGE_EXECUTE_READWRITE
         | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
         | winapi::um::winnt::PAGE_READWRITE
@@ -71,16 +69,6 @@ fn main() -> anyhow::Result<()> {
             process.re_scan_regions(&mut locations, scan);
         }
 
-        // let target = loop {
-        //     match scan::write()? {
-        //         scan::Scan::Exact(v) => break v,
-        //         _ => {
-        //             println!("Please enter an exact value to write.");
-        //             continue;
-        //         }
-        //     }
-        // };
-
         let address = match locations[0].locations {
             CandidateLocations::Discrete { ref locations } => locations[0],
             _ => anyhow::bail!("Unexpected candidate locations"),
@@ -88,175 +76,33 @@ fn main() -> anyhow::Result<()> {
 
         println!("Target Address: {address:x}");
 
-        let threads: anyhow::Result<Vec<thread::ProcessThread>> = debug::enum_threads(process.pid)
-            .context("iter threads")?
-            .into_iter()
-            .map(thread::ProcessThread::open)
-            .collect();
-
-        threads?.iter_mut().for_each(|t| {
-            match t.suspend() {
-                Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
-                Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
-            }
-            match t.get_context() {
-                Ok(context) => {
-                    println!("Dr0: {:016x}", context.Dr0);
-                    println!("Dr7: {:016x}", context.Dr7);
-                    println!("Dr6: {:016x}", context.Dr6);
-                    println!("Rax: {:016x}", context.Rax);
-                    println!("Rbx: {:016x}", context.Rbx);
-                    println!("Rcx: {:016x}", context.Rcx);
-                    println!("Rip: {:016x}", context.Rip);
-                }
-                Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
-            }
-            t.watch_memory_write(address).expect("watch memory write");
-            match t.resume() {
-                Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
-                Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
-            }
-        });
-        let debugger = DebugToken::debug(process.pid).context("debug token")?;
-        loop {
-            let event = debugger.wait_event(None).context("wait event")?;
-            if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
-                let info = unsafe { event.u.Exception() };
-                println!("First Chance: {}", info.dwFirstChance);
-                println!("Exception Code: {:x}", info.ExceptionRecord.ExceptionCode);
-                println!("Exception Flags: {:x}", info.ExceptionRecord.ExceptionFlags);
-                println!(
-                    "Exception Record: {:x}",
-                    info.ExceptionRecord.ExceptionRecord as usize
-                );
-                println!(
-                    "Exception Address: {:x}",
-                    info.ExceptionRecord.ExceptionAddress as usize
-                );
-                println!(
-                    "Number Parameters: {}",
-                    info.ExceptionRecord.NumberParameters
-                );
-                println!(
-                    "Exception Information: {:?}",
-                    info.ExceptionRecord.ExceptionInformation
-                );
-                if info.ExceptionRecord.ExceptionCode
-                    == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP
-                {
-                    // let addr = info.ExceptionRecord.ExceptionAddress as usize;
-                    // match process.read_memory(addr - 10, 20) {
-                    //     Ok(bytes) => println!("Inst context: {bytes:02x?}"),
-                    //     Err(e) => {
-                    //         eprintln!("Fail to read instruction context: {e}")
-                    //     }
-                    // }
-                    // input.clear();
-                    // println!("input (offset len)> ");
-                    // std::io::stdin().read_line(&mut input)?;
-                    // let s = input.trim();
-                    // let Some((offset, len)) = s.split_once(' ') else {
-                    //     anyhow::bail!("invalid input")
-                    // };
-                    // let offset = offset.trim().parse::<usize>()?;
-                    // let len = len.trim().parse::<usize>()?;
-                    // let value = vec![0x90; len];
-                    // match process.write_memory(addr - 10 + offset, &value) {
-                    //     Ok(_) => eprintln!("Patch [{addr:x}] with NOP"),
-                    //     Err(e) => eprintln!("Fail to patch [{addr:x}] with NOP: {e}"),
-                    // }
-                    let region = process
-                        .memory_region()
-                        .into_iter()
-                        .find(|region| {
-                            let base = region.BaseAddress as usize;
-                            let target = info.ExceptionRecord.ExceptionAddress as usize;
-                            base <= target && target <= base + region.RegionSize
-                        })
-                        .ok_or_else(|| anyhow::anyhow!("not matching region found!"))?;
-
-                    println!(
-                        "ExceptionAddress: {:x}",
-                        info.ExceptionRecord.ExceptionAddress as usize
-                    );
-                    println!(
-                        "Region: 0x{:x}-0x{:x}",
-                        region.BaseAddress as usize,
-                        region.BaseAddress as usize + region.RegionSize
-                    );
-
-                    let bytes =
-                        process.read_memory(region.BaseAddress as usize, region.RegionSize)?;
-
-                    let mut decoder = Decoder::with_ip(
-                        64,
-                        &bytes,
-                        region.BaseAddress as u64,
-                        DecoderOptions::NONE,
-                    );
-
-                    let mut instruction = iced_x86::Instruction::default();
-                    while decoder.can_decode() {
-                        decoder.decode_out(&mut instruction);
-                        if instruction.next_ip() == info.ExceptionRecord.ExceptionAddress as u64 {
-                            println!("Instruction: {instruction}");
-                            let value = vec![0x90; instruction.len()];
-                            process.write_memory(instruction.ip() as usize, &value)?;
-                            break;
-                        }
-                    }
-
-                    process.flush_cache()?;
-                    debugger.continue_event(event)?;
-                    break;
-                }
-            }
-            debugger.continue_event(event).context("continue event")?;
+        input.clear();
+        print!("Write a hardware breakpoint? (y/n) > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        let s = input.trim();
+        if s == "y" {
+            write_nop(&process, address)?;
         }
-        let threads: anyhow::Result<Vec<thread::ProcessThread>> = debug::enum_threads(process.pid)
-            .context("iter threads")?
-            .into_iter()
-            .map(thread::ProcessThread::open)
-            .collect();
 
-        threads?.iter_mut().for_each(|t| {
-            match t.suspend() {
-                Ok(count) => println!("Suspended thread {}: suspend count {}", t.id(), count),
-                Err(e) => println!("Failed to suspend thread {}: {}", t.id(), e),
-            }
-            match t.cancel() {
-                Ok(_) => println!("Success remove hardware breakpoint for thread {}", t.id()),
-                Err(e) => eprintln!(
-                    "Failed to remove hardware breakpoint for thread {}: {e}",
-                    t.id()
-                ),
-            }
-            match t.get_context() {
-                Ok(context) => {
-                    println!("Dr0: {:016x}", context.Dr0);
-                    println!("Dr7: {:016x}", context.Dr7);
-                    println!("Dr6: {:016x}", context.Dr6);
-                    println!("Rax: {:016x}", context.Rax);
-                    println!("Rbx: {:016x}", context.Rbx);
-                    println!("Rcx: {:016x}", context.Rcx);
-                    println!("Rip: {:016x}", context.Rip);
+        input.clear();
+        print!("Rewrite the value? (y/n) > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        let s = input.trim();
+        if s == "y" {
+            let target = loop {
+                match scan::write()? {
+                    scan::Scan::Exact(v) => break v,
+                    _ => {
+                        println!("Please enter an exact value to write.");
+                        continue;
+                    }
                 }
-                Err(e) => eprintln!("Failed to get context of thread {}: {}", t.id(), e),
-            }
-
-            match t.resume() {
-                Ok(count) => println!("Resumed thread {}: suspend count {}", t.id(), count),
-                Err(e) => println!("Failed to resume thread {}: {}", t.id(), e),
-            }
-        });
-
-        // match locations[0].locations {
-        //     CandidateLocations::Discrete { ref locations } => {
-        //         let n = process.write_memory(locations[0], target.mem_view())?;
-        //         println!("Written {} bytes to address: [{:x}]", n, locations[0]);
-        //     }
-        //     _ => anyhow::bail!("Unexpected candidate locations"),
-        // }
+            };
+            let n = process.write_memory(address, target.mem_view())?;
+            println!("Written {n} bytes to address: [{address:x}]");
+        }
 
         input.clear();
         print!("Do you want to write again? (y/n): ");
@@ -287,4 +133,78 @@ pub fn enum_proc() -> anyhow::Result<Vec<u32>> {
         pid.set_len(size as usize / size_of::<u32>());
     }
     Ok(pid)
+}
+
+pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
+    let threads: anyhow::Result<Vec<thread::ProcessThread>> = process
+        .enum_threads()
+        .context("iter threads")?
+        .into_iter()
+        .map(thread::ProcessThread::open)
+        .collect();
+
+    let mut threads = threads?;
+
+    for thread in threads.iter_mut() {
+        thread.suspend()?;
+        thread.watch_memory_write(address)?;
+        thread.resume()?;
+    }
+    let debugger = DebugToken::debug(process.pid).context("debug token")?;
+    loop {
+        let event = debugger.wait_event(None).context("wait event")?;
+        if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
+            let info = unsafe { event.u.Exception() };
+            if info.ExceptionRecord.ExceptionCode == winapi::um::minwinbase::EXCEPTION_SINGLE_STEP {
+                let region = process
+                    .memory_region()
+                    .into_iter()
+                    .find(|region| {
+                        let base = region.BaseAddress as usize;
+                        let target = info.ExceptionRecord.ExceptionAddress as usize;
+                        base <= target && target < base + region.RegionSize
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("not matching region found!"))?;
+
+                println!(
+                    "ExceptionAddress: {:x}",
+                    info.ExceptionRecord.ExceptionAddress as usize
+                );
+                println!(
+                    "Region: 0x{:x}-0x{:x}",
+                    region.BaseAddress as usize,
+                    region.BaseAddress as usize + region.RegionSize
+                );
+
+                let bytes = process.read_memory(region.BaseAddress as usize, region.RegionSize)?;
+
+                let mut decoder =
+                    Decoder::with_ip(64, &bytes, region.BaseAddress as u64, DecoderOptions::NONE);
+
+                let mut instruction = iced_x86::Instruction::default();
+                while decoder.can_decode() {
+                    decoder.decode_out(&mut instruction);
+                    if instruction.next_ip() == info.ExceptionRecord.ExceptionAddress as u64 {
+                        println!("Instruction: {instruction}");
+                        let value = vec![0x90; instruction.len()];
+                        process.write_memory(instruction.ip() as usize, &value)?;
+                        break;
+                    }
+                }
+
+                process.flush_cache()?;
+                debugger.continue_event(event)?;
+                break;
+            }
+        }
+        debugger.continue_event(event).context("continue event")?;
+    }
+
+    for thread in threads.iter_mut() {
+        thread.suspend()?;
+        thread.cancel()?;
+        thread.resume()?;
+    }
+
+    Ok(())
 }
