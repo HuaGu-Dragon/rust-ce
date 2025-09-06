@@ -84,6 +84,7 @@ impl ProcessThread {
         }
     }
 
+    //TODO: Create a Struct then when drop call the cancel automatically
     pub fn watch_memory_write(&self, address: usize) -> anyhow::Result<()> {
         let mut context = self.get_context()?;
         context.Dr0 = address as u64;

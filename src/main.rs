@@ -1,5 +1,5 @@
 use anyhow::Context;
-use iced_x86::{Decoder, DecoderOptions};
+use iced_x86::{Decoder, DecoderOptions, Formatter, NasmFormatter};
 
 use crate::{debug::DebugToken, memory::CandidateLocations, progress::Process};
 
@@ -170,24 +170,47 @@ pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
                     "ExceptionAddress: {:x}",
                     info.ExceptionRecord.ExceptionAddress as usize
                 );
-                println!(
-                    "Region: 0x{:x}-0x{:x}",
-                    region.BaseAddress as usize,
-                    region.BaseAddress as usize + region.RegionSize
-                );
 
                 let bytes = process.read_memory(region.BaseAddress as usize, region.RegionSize)?;
 
-                let mut decoder =
+                let decoder =
                     Decoder::with_ip(64, &bytes, region.BaseAddress as u64, DecoderOptions::NONE);
+                let mut formatter = NasmFormatter::new();
+                let mut output = String::new();
 
-                let mut instruction = iced_x86::Instruction::default();
-                while decoder.can_decode() {
-                    decoder.decode_out(&mut instruction);
-                    if instruction.next_ip() == info.ExceptionRecord.ExceptionAddress as u64 {
-                        println!("Instruction: {instruction}");
-                        let value = vec![0x90; instruction.len()];
-                        process.write_memory(instruction.ip() as usize, &value)?;
+                let instruction = decoder.into_iter().collect::<Vec<_>>();
+                for (i, inst) in instruction.iter().enumerate() {
+                    if inst.next_ip() == info.ExceptionRecord.ExceptionAddress as u64 {
+                        let low = i.saturating_sub(5);
+                        let high = (i + 5).min(instruction.len());
+                        for (l, inst) in instruction[low..high].iter().enumerate() {
+                            print!(
+                                "{} {:016X} ",
+                                if l == i.saturating_sub(low) {
+                                    ">>>"
+                                } else {
+                                    "   "
+                                },
+                                inst.ip()
+                            );
+                            let k = (inst.ip() - region.BaseAddress as u64) as usize;
+                            let inst_bytes = &bytes[k..k + inst.len()];
+                            for b in inst_bytes {
+                                print!("{b:02X} ");
+                            }
+                            if inst_bytes.len() < 8 {
+                                for _ in 0..8usize.saturating_sub(inst_bytes.len()) {
+                                    print!("   ");
+                                }
+                            }
+                            output.clear();
+                            formatter.format(inst, &mut output);
+                            println!("{output}");
+                        }
+
+                        let value = vec![0x90; inst.len()];
+                        process.write_memory(inst.ip() as usize, &value)?;
+
                         break;
                     }
                 }

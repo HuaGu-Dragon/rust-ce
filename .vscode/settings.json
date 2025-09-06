@@ -5,6 +5,7 @@
     "handleapi",
     "memoryapi",
     "minwindef",
+    "Nasm",
     "processthreadsapi",
     "psapi",
     "READWRITE",
