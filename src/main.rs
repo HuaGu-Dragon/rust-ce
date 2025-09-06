@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
             _ => anyhow::bail!("Unexpected candidate locations"),
         };
 
-        println!("Target Address: {:x}", address);
+        println!("Target Address: {address:x}");
 
         let threads: anyhow::Result<Vec<thread::ProcessThread>> = debug::enum_threads(process.pid)
             .context("iter threads")?
@@ -146,7 +146,7 @@ fn main() -> anyhow::Result<()> {
                 {
                     let addr = info.ExceptionRecord.ExceptionAddress as usize;
                     match process.read_memory(addr - 10, 20) {
-                        Ok(bytes) => println!("Inst context: {:02x?}", bytes),
+                        Ok(bytes) => println!("Inst context: {bytes:02x?}"),
                         Err(e) => {
                             eprintln!("Fail to read instruction context: {e}")
                         }
@@ -161,9 +161,9 @@ fn main() -> anyhow::Result<()> {
                     let offset = offset.trim().parse::<usize>()?;
                     let len = len.trim().parse::<usize>()?;
                     let value = vec![0x90; len];
-                    match process.write_memory(addr - offset, &value) {
-                        Ok(_) => eprintln!("Patch [{:x}] with NOP", addr),
-                        Err(e) => eprintln!("Fail to patch [{:x}] with NOP: {e}", addr),
+                    match process.write_memory(addr - 10 + offset, &value) {
+                        Ok(_) => eprintln!("Patch [{addr:x}] with NOP"),
+                        Err(e) => eprintln!("Fail to patch [{addr:x}] with NOP: {e}"),
                     }
                     process.flush_cache()?;
                     debugger.continue_event(event)?;

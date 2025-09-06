@@ -17,6 +17,10 @@ impl CandidateLocations {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn iter(&self) -> LocationIter {
         self.into_iter()
     }
@@ -46,7 +50,7 @@ impl<'a> IntoIterator for &'a CandidateLocations {
     fn into_iter(self) -> Self::IntoIter {
         match self {
             CandidateLocations::Discrete { locations } => LocationIter {
-                iter: Box::new(locations.iter().map(|&x| x)),
+                iter: Box::new(locations.iter().copied()),
             },
             CandidateLocations::Dense { range, step } => LocationIter {
                 iter: Box::new(range.clone().step_by(*step)),

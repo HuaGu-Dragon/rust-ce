@@ -6,6 +6,10 @@ use std::{
 
 use crate::memory::{CandidateLocations, Region, Value};
 
+/// # Safety
+///
+/// The implementer of this trait must ensure that the returned memory slice is valid for the lifetime of use
+/// and that any operations performed via the associated scan mode do not violate memory safety.
 pub unsafe trait Scannable {
     fn mem_view(&self) -> &[u8];
 
@@ -294,7 +298,7 @@ impl<T: Scannable> Scan<T> {
     pub fn rerun(&self, region: &mut Region, memory: Vec<u8>) -> bool {
         match self {
             Scan::Unknown(_, _) => true,
-            scan @ _ => {
+            scan => {
                 region.locations.retain_mut(|addr| {
                     let offset = addr - region.info.BaseAddress as usize;
                     let bytes = &memory[offset..];
@@ -302,7 +306,7 @@ impl<T: Scannable> Scan<T> {
                     let new = &bytes[..scan.size()];
                     self.acceptable(old, new)
                 });
-                if region.locations.len() == 0 {
+                if region.locations.is_empty() {
                     false
                 } else {
                     region.value = Value::Any {

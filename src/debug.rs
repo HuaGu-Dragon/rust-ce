@@ -81,8 +81,7 @@ impl DebugToken {
     ) -> anyhow::Result<winapi::um::minwinbase::DEBUG_EVENT> {
         let mut event = MaybeUninit::uninit();
         let timeout = timeout
-            .map(|d| d.as_millis().try_into().ok())
-            .flatten()
+            .and_then(|d| d.as_millis().try_into().ok())
             .unwrap_or(winapi::um::winbase::INFINITE);
 
         if unsafe { winapi::um::debugapi::WaitForDebugEvent(event.as_mut_ptr(), timeout) }
