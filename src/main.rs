@@ -200,8 +200,8 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
         }
     };
 
-    let value = process.write_memory(address, scan.mem_view())?;
-    println!("  Value at {address:x}: {value:x?}");
+    let bytes = process.write_memory(address, scan.mem_view())?;
+    println!("  Write {bytes} bytes to address: [{address:x}]");
 
     Ok(())
 }

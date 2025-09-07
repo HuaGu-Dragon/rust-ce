@@ -5,6 +5,6 @@
 - [x] Part 3: Unknown initial value
 - [x] Part 4: Floating points
 - [x] Part 5: Code finder
-- [ ] Part 6: Pointers
+- [x] Part 6: Pointers
 - [ ] Part 7: Code Injection
 - [ ] Part 8: Multilevel pointers
