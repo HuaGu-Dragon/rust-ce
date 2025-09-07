@@ -153,12 +153,6 @@ pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
 
     let threads = threads?;
 
-    // for thread in threads.iter_mut() {
-    //     thread.suspend()?;
-    //     thread.watch_memory_write(address)?;
-    //     thread.resume()?;
-    // }
-
     let _breakpoints = threads
         .iter()
         .map(|t| {
