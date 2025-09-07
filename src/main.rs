@@ -49,6 +49,7 @@ fn main() -> anyhow::Result<()> {
         println!("1. Find Address");
         println!("2. Write Address");
         println!("3. Exit");
+        print!("> ");
         std::io::Write::flush(&mut std::io::stdout())?;
         std::io::stdin().read_line(&mut input)?;
         let s = input.trim();
@@ -153,7 +154,7 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
     std::io::stdin().read_line(&mut input)?;
     let s = input.trim();
 
-    if s == "y" {
+    let address = if s == "y" {
         input.clear();
         print!("The level of pointer? (1-5) > ");
         std::io::Write::flush(&mut std::io::stdout())?;
@@ -165,12 +166,6 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
         input.clear();
         std::io::stdin().read_line(&mut input)?;
         let mut address: usize = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
-
-        print!("The size of the value? > ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        input.clear();
-        std::io::stdin().read_line(&mut input)?;
-        let size: usize = input.trim().parse()?;
 
         for _ in 0..level.saturating_sub(1) {
             input.clear();
@@ -192,29 +187,27 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
         std::io::Write::flush(&mut std::io::stdout())?;
         std::io::stdin().read_line(&mut input)?;
         let offset: isize = isize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
-        address = (address as isize + offset) as usize;
-        let value = process.read_memory(address, size)?;
-        println!("  Value at {address:x}: {value:x?}");
+        (address as isize + offset) as usize
     } else {
         input.clear();
         print!("The address? (hex) > ");
         std::io::Write::flush(&mut std::io::stdout())?;
         std::io::stdin().read_line(&mut input)?;
-        let address: usize = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
+        usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?
+    };
 
-        let scan = loop {
-            match scan::write()? {
-                scan::Scan::Exact(v) => break v,
-                _ => {
-                    println!("Please enter an exact value to write.");
-                    continue;
-                }
+    let scan = loop {
+        match scan::write()? {
+            scan::Scan::Exact(v) => break v,
+            _ => {
+                println!("Please enter an exact value to write.");
+                continue;
             }
-        };
+        }
+    };
 
-        let value = process.write_memory(address, scan.mem_view())?;
-        println!("  Value at {address:x}: {value:x?}");
-    }
+    let value = process.write_memory(address, scan.mem_view())?;
+    println!("  Value at {address:x}: {value:x?}");
 
     Ok(())
 }
