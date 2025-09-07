@@ -44,80 +44,27 @@ fn main() -> anyhow::Result<()> {
         };
     };
 
-    let mask = winapi::um::winnt::PAGE_EXECUTE_READWRITE
-        | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
-        | winapi::um::winnt::PAGE_READWRITE
-        | winapi::um::winnt::PAGE_WRITECOPY;
+    let address: usize = 0x100325AD0;
+    let pointer = process.read_memory(address, 8)?;
+    let pointer = usize::from_le_bytes(pointer.try_into().unwrap());
+    println!("  Pointer at {address:x}: {pointer:x}");
+    let value = process.read_memory(pointer, 4)?;
+    let value = u32::from_le_bytes(value.try_into().unwrap());
+    println!("  Value at {pointer:x}: {value}");
+
     loop {
-        let regions: Vec<_> = process
-            .memory_region()
-            .into_iter()
-            .filter(|region| region.Protect & mask != 0)
-            .collect();
-        println!("  Memory Regions: {}", regions.len());
-
-        // let address: usize = 0x100325AD0;
-        // let pointer = process.read_memory(address, 8)?;
-        // let pointer = usize::from_le_bytes(pointer.try_into().unwrap());
-        // println!("  Pointer at {address:x}: {pointer:x}");
-        // let value = process.read_memory(pointer, 4)?;
-        // let value = u32::from_le_bytes(value.try_into().unwrap());
-        // println!("  Value at {pointer:x}: {value}");
-
-        let scan = scan::build()?;
-
-        let mut locations = process.scan_regions(regions, scan);
-
-        while locations.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
-            println!(
-                "  Candidate Locations: {}",
-                locations.iter().map(|r| r.locations.len()).sum::<usize>()
-            );
-            let scan = scan::build()?;
-            process.re_scan_regions(&mut locations, scan);
-        }
-
-        let address = match locations[0].locations {
-            CandidateLocations::Discrete { ref locations } => locations[0],
-            _ => anyhow::bail!("Unexpected candidate locations"),
-        };
-
-        println!("Target Address: {address:x}");
-
         input.clear();
-        print!("Write a hardware breakpoint? (y/n) > ");
+        println!("1. Find Address");
+        println!("2. Write Address");
+        println!("3. Exit");
         std::io::Write::flush(&mut std::io::stdout())?;
         std::io::stdin().read_line(&mut input)?;
         let s = input.trim();
-        if s == "y" {
-            write_nop(&process, address)?;
-        }
 
-        input.clear();
-        print!("Rewrite the value? (y/n) > ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        std::io::stdin().read_line(&mut input)?;
-        let s = input.trim();
-        if s == "y" {
-            let target = loop {
-                match scan::write()? {
-                    scan::Scan::Exact(v) => break v,
-                    _ => {
-                        println!("Please enter an exact value to write.");
-                        continue;
-                    }
-                }
-            };
-            let n = process.write_memory(address, target.mem_view())?;
-            println!("Written {n} bytes to address: [{address:x}]");
-        }
-
-        input.clear();
-        print!("Do you want to write again? (y/n): ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        std::io::stdin().read_line(&mut input)?;
-        if input.trim().to_lowercase() != "y" {
-            break;
+        match s.as_bytes()[0] {
+            b'1' => find_address(&process)?,
+            b'2' => write_address(&process)?,
+            _ => break,
         }
     }
     Ok(())
@@ -141,6 +88,139 @@ pub fn enum_proc() -> anyhow::Result<Vec<u32>> {
         pid.set_len(size as usize / size_of::<u32>());
     }
     Ok(pid)
+}
+
+pub fn find_address(process: &Process) -> anyhow::Result<()> {
+    let mask = winapi::um::winnt::PAGE_EXECUTE_READWRITE
+        | winapi::um::winnt::PAGE_EXECUTE_WRITECOPY
+        | winapi::um::winnt::PAGE_READWRITE
+        | winapi::um::winnt::PAGE_WRITECOPY;
+
+    let regions: Vec<_> = process
+        .memory_region()
+        .into_iter()
+        .filter(|region| region.Protect & mask != 0)
+        .collect();
+    println!("  Memory Regions: {}", regions.len());
+
+    let scan = scan::build()?;
+
+    let mut locations = process.scan_regions(regions, scan);
+
+    while locations.iter().map(|r| r.locations.len()).sum::<usize>() != 1 {
+        println!(
+            "  Candidate Locations: {}",
+            locations.iter().map(|r| r.locations.len()).sum::<usize>()
+        );
+        let scan = scan::build()?;
+        process.re_scan_regions(&mut locations, scan);
+    }
+
+    let address = match locations[0].locations {
+        CandidateLocations::Discrete { ref locations } => locations[0],
+        _ => anyhow::bail!("Unexpected candidate locations"),
+    };
+
+    println!("Target Address: {address:x}");
+
+    let mut input = String::new();
+    print!("Write a hardware breakpoint? (y/n) > ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    std::io::stdin().read_line(&mut input)?;
+    let s = input.trim();
+    if s == "y" {
+        write_nop(process, address)?;
+    }
+
+    input.clear();
+    print!("Rewrite the value? (y/n) > ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    std::io::stdin().read_line(&mut input)?;
+    let s = input.trim();
+    if s == "y" {
+        let target = loop {
+            match scan::write()? {
+                scan::Scan::Exact(v) => break v,
+                _ => {
+                    println!("Please enter an exact value to write.");
+                    continue;
+                }
+            }
+        };
+        let n = process.write_memory(address, target.mem_view())?;
+        println!("Written {n} bytes to address: [{address:x}]");
+    }
+
+    Ok(())
+}
+
+pub fn write_address(process: &Process) -> anyhow::Result<()> {
+    let mut input = String::new();
+    print!("Is the address a pointer? (y/n) > ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    std::io::stdin().read_line(&mut input)?;
+    let s = input.trim();
+
+    if s == "y" {
+        input.clear();
+        print!("The level of pointer? (1-5) > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        let level: usize = input.trim().parse()?;
+
+        println!("The base address of pointer? (hex) > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        input.clear();
+        std::io::stdin().read_line(&mut input)?;
+        let mut address: usize = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
+
+        print!("The size of the value? > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        input.clear();
+        std::io::stdin().read_line(&mut input)?;
+        let size: usize = input.trim().parse()?;
+
+        for _ in 0..level.saturating_sub(1) {
+            input.clear();
+            print!("The offset? (hex) > ");
+            std::io::Write::flush(&mut std::io::stdout())?;
+            std::io::stdin().read_line(&mut input)?;
+
+            let offset: isize = isize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
+            address = (address as isize + offset) as usize;
+
+            let pointer = process.read_memory(address, std::mem::size_of::<usize>())?;
+            println!("  Pointer at {address:x}: {pointer:x?}");
+
+            address = usize::from_le_bytes(pointer.try_into().unwrap());
+        }
+
+        input.clear();
+        print!("The final offset? (hex) > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        let offset: isize = isize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
+        address = (address as isize + offset) as usize;
+        let value = process.read_memory(address, size)?;
+        println!("  Value at {address:x}: {value:x?}");
+    } else {
+        input.clear();
+        print!("The address? (hex) > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        let address: usize = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
+
+        input.clear();
+        print!("The size of the value? > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        std::io::stdin().read_line(&mut input)?;
+        let size: usize = input.trim().parse()?;
+
+        let value = process.read_memory(address, size)?;
+        println!("  Value at {address:x}: {value:x?}");
+    }
+
+    Ok(())
 }
 
 pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
