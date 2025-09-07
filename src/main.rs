@@ -56,6 +56,14 @@ fn main() -> anyhow::Result<()> {
             .collect();
         println!("  Memory Regions: {}", regions.len());
 
+        // let address: usize = 0x100325AD0;
+        // let pointer = process.read_memory(address, 8)?;
+        // let pointer = usize::from_le_bytes(pointer.try_into().unwrap());
+        // println!("  Pointer at {address:x}: {pointer:x}");
+        // let value = process.read_memory(pointer, 4)?;
+        // let value = u32::from_le_bytes(value.try_into().unwrap());
+        // println!("  Value at {pointer:x}: {value}");
+
         let scan = scan::build()?;
 
         let mut locations = process.scan_regions(regions, scan);
@@ -143,13 +151,27 @@ pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
         .map(thread::ProcessThread::open)
         .collect();
 
-    let mut threads = threads?;
+    let threads = threads?;
 
-    for thread in threads.iter_mut() {
-        thread.suspend()?;
-        thread.watch_memory_write(address)?;
-        thread.resume()?;
-    }
+    // for thread in threads.iter_mut() {
+    //     thread.suspend()?;
+    //     thread.watch_memory_write(address)?;
+    //     thread.resume()?;
+    // }
+
+    let _breakpoints = threads
+        .iter()
+        .map(|t| {
+            let did_suspend = t.suspend().is_ok();
+            let breakpoint =
+                t.add_breakpoint(address, thread::Condition::Write, thread::Size::Dword);
+            if did_suspend {
+                drop(t.resume());
+            }
+            breakpoint
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
     let debugger = DebugToken::debug(process.pid).context("debug token")?;
     loop {
         let event = debugger.wait_event(None).context("wait event")?;
@@ -221,12 +243,6 @@ pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
             }
         }
         debugger.continue_event(event).context("continue event")?;
-    }
-
-    for thread in threads.iter_mut() {
-        thread.suspend()?;
-        thread.cancel()?;
-        thread.resume()?;
     }
 
     Ok(())
