@@ -179,3 +179,67 @@ impl Drop for Breakpoint<'_> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::thread::{Breakpoint, Condition, Size};
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum DebugRegister {
+        Dr0,
+        Dr1,
+        Dr2,
+        Dr3,
+    }
+
+    impl Breakpoint<'_> {
+        fn update(
+            mut dr7: u64,
+            condition: Condition,
+            size: Size,
+        ) -> Option<(u64, DebugRegister, u64)> {
+            let index = (0..4).find(|&i| (dr7 & (0b11 << (i * 2))) == 0)?;
+            let register = match index {
+                0 => DebugRegister::Dr0,
+                1 => DebugRegister::Dr1,
+                2 => DebugRegister::Dr2,
+                3 => DebugRegister::Dr3,
+                _ => unreachable!(),
+            };
+            let clear_mask = !((0b1111 << (16 + index * 4)) | (0b11 << (index * 2)));
+            dr7 &= clear_mask;
+
+            dr7 |= 0b1 << (index * 2);
+
+            let sc = (((size as u8) << 2) | (condition as u8)) as u64;
+            dr7 |= sc << (16 + index * 4);
+            Some((clear_mask, register, dr7))
+        }
+    }
+
+    #[test]
+    fn brk_add_one() {
+        // DR7 starts with garbage which should be respected.
+        let (clear_mask, dr, dr7) =
+            Breakpoint::update(0x1700, Condition::Write, Size::Dword).unwrap();
+
+        assert_eq!(clear_mask, 0xffff_ffff_fff0_fffc);
+        assert_eq!(dr, DebugRegister::Dr0);
+        assert_eq!(dr7, 0x0000_0000_000d_1701);
+    }
+
+    #[test]
+    fn brk_add_two() {
+        let (clear_mask, dr, dr7) =
+            Breakpoint::update(0x0000_0000_000d_0001, Condition::Write, Size::Dword).unwrap();
+
+        assert_eq!(clear_mask, 0xffff_ffff_ff0f_fff3);
+        assert_eq!(dr, DebugRegister::Dr1);
+        assert_eq!(dr7, 0x0000_0000_00dd_0005);
+    }
+
+    #[test]
+    fn brk_try_add_when_max() {
+        assert!(Breakpoint::update(0x0000_0000_dddd_0055, Condition::Write, Size::Dword).is_none());
+    }
+}
