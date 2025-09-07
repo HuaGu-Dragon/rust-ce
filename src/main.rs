@@ -161,33 +161,27 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
         std::io::stdin().read_line(&mut input)?;
         let level: usize = input.trim().parse()?;
 
-        println!("The base address of pointer? (hex) > ");
+        print!("The base address of pointer? (hex) > ");
         std::io::Write::flush(&mut std::io::stdout())?;
         input.clear();
         std::io::stdin().read_line(&mut input)?;
         let mut address: usize = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
 
-        for _ in 0..level.saturating_sub(1) {
+        for _ in 0..level {
             input.clear();
-            print!("The offset? (hex) > ");
+            print!("The offset? > ");
             std::io::Write::flush(&mut std::io::stdout())?;
             std::io::stdin().read_line(&mut input)?;
 
-            let offset: isize = isize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
+            let offset: isize = input.trim().parse()?;
             address = (address as isize + offset) as usize;
 
             let pointer = process.read_memory(address, std::mem::size_of::<usize>())?;
             println!("  Pointer at {address:x}: {pointer:x?}");
 
-            address = usize::from_le_bytes(pointer.try_into().unwrap());
+            address = usize::from_ne_bytes(pointer.try_into().unwrap());
         }
-
-        input.clear();
-        print!("The final offset? (hex) > ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        std::io::stdin().read_line(&mut input)?;
-        let offset: isize = isize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
-        (address as isize + offset) as usize
+        address
     } else {
         input.clear();
         print!("The address? (hex) > ");
