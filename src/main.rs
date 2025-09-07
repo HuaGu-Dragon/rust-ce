@@ -122,7 +122,7 @@ pub fn find_address(process: &Process) -> anyhow::Result<()> {
     std::io::stdin().read_line(&mut input)?;
     let s = input.trim();
     if s == "y" {
-        write_nop(process, address)?;
+        write_breakpoint(process, address)?;
     }
 
     input.clear();
@@ -206,7 +206,7 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
+pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()> {
     let threads: anyhow::Result<Vec<thread::ProcessThread>> = process
         .enum_threads()
         .context("iter threads")?
@@ -287,8 +287,15 @@ pub fn write_nop(process: &Process, address: usize) -> anyhow::Result<()> {
                             println!("{output}");
                         }
 
-                        let value = vec![0x90; inst.len()];
-                        process.write_memory(inst.ip() as usize, &value)?;
+                        let mut input = String::new();
+                        print!("Write NOPs to this instruction? (y/n) > ");
+                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                        std::io::stdin().read_line(&mut input).unwrap();
+                        let s = input.trim();
+                        if s == "y" {
+                            let value = vec![0x90; inst.len()];
+                            process.write_memory(inst.ip() as usize, &value)?;
+                        }
 
                         break;
                     }
