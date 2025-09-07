@@ -202,13 +202,17 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
         std::io::stdin().read_line(&mut input)?;
         let address: usize = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
 
-        input.clear();
-        print!("The size of the value? > ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        std::io::stdin().read_line(&mut input)?;
-        let size: usize = input.trim().parse()?;
+        let scan = loop {
+            match scan::write()? {
+                scan::Scan::Exact(v) => break v,
+                _ => {
+                    println!("Please enter an exact value to write.");
+                    continue;
+                }
+            }
+        };
 
-        let value = process.read_memory(address, size)?;
+        let value = process.write_memory(address, scan.mem_view())?;
         println!("  Value at {address:x}: {value:x?}");
     }
 
