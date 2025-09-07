@@ -44,14 +44,6 @@ fn main() -> anyhow::Result<()> {
         };
     };
 
-    let address: usize = 0x100325AD0;
-    let pointer = process.read_memory(address, 8)?;
-    let pointer = usize::from_le_bytes(pointer.try_into().unwrap());
-    println!("  Pointer at {address:x}: {pointer:x}");
-    let value = process.read_memory(pointer, 4)?;
-    let value = u32::from_le_bytes(value.try_into().unwrap());
-    println!("  Value at {pointer:x}: {value}");
-
     loop {
         input.clear();
         println!("1. Find Address");
