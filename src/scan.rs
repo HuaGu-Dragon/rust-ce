@@ -54,6 +54,7 @@ impl FromStr for Scan<Box<dyn Scannable>> {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        #[derive(PartialEq, Eq)]
         enum Ty {
             U8,
             U16,
@@ -67,6 +68,7 @@ impl FromStr for Scan<Box<dyn Scannable>> {
             I128,
             F32,
             F64,
+            Ptr,
         }
 
         impl FromStr for Ty {
@@ -86,6 +88,7 @@ impl FromStr for Scan<Box<dyn Scannable>> {
                     "i128" | "I128" => Ty::I128,
                     "f32" | "F32" => Ty::F32,
                     "f64" | "F64" => Ty::F64,
+                    "ptr" | "Ptr" => Ty::Ptr,
                     _ => return Err(anyhow::anyhow!("Unknown type: {}", s)),
                 })
             }
@@ -106,6 +109,13 @@ impl FromStr for Scan<Box<dyn Scannable>> {
                     Ty::I128 => Box::new(value.parse::<i128>()?),
                     Ty::F32 => Box::new(value.parse::<f32>()?),
                     Ty::F64 => Box::new(value.parse::<f64>()?),
+                    Ty::Ptr => {
+                        if std::mem::size_of::<usize>() == 4 {
+                            Box::new(u32::from_str_radix(value.trim_start_matches("0x"), 16)?)
+                        } else {
+                            Box::new(u64::from_str_radix(value.trim_start_matches("0x"), 16)?)
+                        }
+                    }
                 })
             }
 
@@ -116,6 +126,7 @@ impl FromStr for Scan<Box<dyn Scannable>> {
                     Ty::U32 | Ty::I32 | Ty::F32 => 4,
                     Ty::U64 | Ty::I64 | Ty::F64 => 8,
                     Ty::U128 | Ty::I128 => 16,
+                    Ty::Ptr => std::mem::size_of::<usize>(),
                 }
             }
 
@@ -133,6 +144,13 @@ impl FromStr for Scan<Box<dyn Scannable>> {
                     Ty::I128 => (0i128).scan_mode(),
                     Ty::F32 => (0f32).scan_mode(),
                     Ty::F64 => (0f64).scan_mode(),
+                    Ty::Ptr => {
+                        if std::mem::size_of::<usize>() == 4 {
+                            (0u32).scan_mode()
+                        } else {
+                            (0u64).scan_mode()
+                        }
+                    }
                 }
             }
         }
@@ -146,6 +164,10 @@ impl FromStr for Scan<Box<dyn Scannable>> {
             let value = s.trim();
             (value, Ty::I32)
         };
+
+        if ty == Ty::Ptr {
+            return Ok(Scan::Exact(ty.parse(value)?));
+        }
 
         Ok(match value.as_bytes()[0] {
             b'u' | b'U' => Scan::Unknown(ty.size(), ty.mode()),

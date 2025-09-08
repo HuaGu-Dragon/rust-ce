@@ -6,5 +6,5 @@
 - [x] Part 4: Floating points
 - [x] Part 5: Code finder
 - [x] Part 6: Pointers
-- [ ] Part 7: Code Injection
-- [ ] Part 8: Multilevel pointers
+- [x] Part 7: Code Injection
+- [x] Part 8: Multilevel pointers
