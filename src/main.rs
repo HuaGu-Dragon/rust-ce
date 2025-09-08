@@ -295,6 +295,16 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
                             formatter.format(inst, &mut output);
                             println!("{output}");
                         }
+                        let thread = threads
+                            .iter()
+                            .find(|t| t.id() == event.dwThreadId)
+                            .ok_or_else(|| anyhow::anyhow!("not matching thread found!"))?;
+                        let context = thread.get_context()?;
+                        println!(
+                            "RAX={:016X} RBX={:016X} RCX={:016X} RDX={:016X}",
+                            context.Rax, context.Rbx, context.Rcx, context.Rdx
+                        );
+                        println!("RDI={:016X} RSI={:016X}", context.Rdi, context.Rsi);
 
                         let mut input = String::new();
                         print!("Write NOPs to this instruction? (y/n) > ");
@@ -368,3 +378,4 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
 
     Ok(())
 }
+// RSI=00000000001A1DD0 + 18h
