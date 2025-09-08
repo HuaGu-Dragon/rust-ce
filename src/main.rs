@@ -1,7 +1,7 @@
 use anyhow::Context;
 use iced_x86::{Decoder, DecoderOptions, Formatter, NasmFormatter};
 
-use crate::{debug::DebugToken, memory::CandidateLocations, progress::Process};
+use crate::{debug::DebugToken, memory::CandidateLocations, progress::Process, thread::Condition};
 
 pub mod debug;
 pub mod memory;
@@ -155,33 +155,48 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
     let s = input.trim();
 
     let address = if s == "y" {
-        input.clear();
-        print!("The level of pointer? (1-5) > ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        std::io::stdin().read_line(&mut input)?;
-        let level: usize = input.trim().parse()?;
-
         print!("The base address of pointer? (hex) > ");
         std::io::Write::flush(&mut std::io::stdout())?;
         input.clear();
         std::io::stdin().read_line(&mut input)?;
-        let mut address: usize = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
 
-        for _ in 0..level {
-            input.clear();
-            print!("The offset? > ");
-            std::io::Write::flush(&mut std::io::stdout())?;
-            std::io::stdin().read_line(&mut input)?;
+        let base_address = usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?;
 
-            let offset: isize = input.trim().parse()?;
-            address = (address as isize + offset) as usize;
+        print!("The offsets? (hex, split by space) > ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        input.clear();
+        std::io::stdin().read_line(&mut input)?;
 
-            let pointer = process.read_memory(address, std::mem::size_of::<usize>())?;
-            println!("  Pointer at {address:x}: {pointer:x?}");
+        let offsets: Vec<isize> = input
+            .split_whitespace()
+            .map(|s| isize::from_str_radix(s.trim_start_matches("0x"), 16).unwrap())
+            .collect();
 
-            address = usize::from_ne_bytes(pointer.try_into().unwrap());
+        let mut current_address = base_address;
+        println!("Base Address: {base_address:x}");
+        for (i, &offset) in offsets
+            .iter()
+            .enumerate()
+            .take(offsets.len().saturating_sub(1))
+        {
+            current_address = (current_address as isize + offset) as usize;
+            let pointer_bytes =
+                process.read_memory(current_address, std::mem::size_of::<usize>())?;
+            let pointer_value = usize::from_ne_bytes(
+                pointer_bytes
+                    .try_into()
+                    .expect("Failed to convert bytes to usize"),
+            );
+            println!("Level {i}: Offset 0x{offset:x} -> Address 0x{pointer_value:x}");
+            current_address = pointer_value;
         }
-        address
+
+        if let Some(&last_offset) = offsets.last() {
+            current_address = (current_address as isize + last_offset) as usize;
+            println!("Final Offset: 0x{last_offset:x} -> Address 0x{current_address:x}");
+        }
+
+        current_address
     } else {
         input.clear();
         print!("The address? (hex) > ");
@@ -225,12 +240,26 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
 
     let threads = threads?;
 
+    let mut input = String::new();
+    print!("Condition (a=access, e=execute, w=write) > ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    std::io::stdin().read_line(&mut input)?;
+    let s = input.trim();
+    let cond = match s.as_bytes()[0] {
+        b'a' => Condition::Access,
+        b'e' => Condition::Execute,
+        b'w' => Condition::Write,
+        _ => {
+            println!("Invalid condition, default to Execute");
+            Condition::Write
+        }
+    };
+
     let _breakpoints = threads
         .iter()
         .map(|t| {
             let did_suspend = t.suspend().is_ok();
-            let breakpoint =
-                t.add_breakpoint(address, thread::Condition::Write, thread::Size::Dword);
+            let breakpoint = t.add_breakpoint(address, cond, thread::Size::Dword);
             if did_suspend {
                 drop(t.resume());
             }
@@ -239,7 +268,7 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     let debugger = DebugToken::debug(process.pid).context("debug token")?;
-    loop {
+    'breakpoint: loop {
         let event = debugger.wait_event(None).context("wait event")?;
         if event.dwDebugEventCode == winapi::um::minwinbase::EXCEPTION_DEBUG_EVENT {
             let info = unsafe { event.u.Exception() };
@@ -306,7 +335,17 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
                         );
                         println!("RDI={:016X} RSI={:016X}", context.Rdi, context.Rsi);
 
-                        let mut input = String::new();
+                        input.clear();
+                        print!("Is this the instruction to modify? (y/n) > ");
+                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                        std::io::stdin().read_line(&mut input).unwrap();
+                        let s = input.trim();
+                        if s != "y" {
+                            debugger.continue_event(event)?;
+                            continue 'breakpoint;
+                        }
+
+                        input.clear();
                         print!("Write NOPs to this instruction? (y/n) > ");
                         std::io::Write::flush(&mut std::io::stdout()).unwrap();
                         std::io::stdin().read_line(&mut input).unwrap();
@@ -378,4 +417,8 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
 
     Ok(())
 }
-// RSI=00000000001A1DD0 + 18h
+// RSI=0000000001608C40 + 18h
+// RSI=00000000015A1EE0 + 0h
+// RSI=0000000001608BA0 + 18h
+// RSI=00000000016563D0 + 10h
+// 100325B00h + 0

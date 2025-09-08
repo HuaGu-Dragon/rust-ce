@@ -8,6 +8,7 @@ pub struct ProcessThread {
 }
 
 #[repr(u8)]
+#[derive(Clone, Copy)]
 pub enum Condition {
     Execute = 0b00,
     Write = 0b01,
