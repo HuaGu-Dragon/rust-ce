@@ -417,8 +417,21 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
 
     Ok(())
 }
-// RSI=0000000001608C40 + 18h
-// RSI=00000000015A1EE0 + 0h
-// RSI=0000000001608BA0 + 18h
-// RSI=00000000016563D0 + 10h
+
+// 100325AD0h + 0 + 0
+
+// [rel 100325AD0h]
+
+//    000000010002DB51 8B 9E E0 07 00 00       mov ebx,[rsi+7E0h]
+// >>> 000000010002DB57 83 AE E0 07 00 00 01    sub dword [rsi+7E0h],1
+
+// To:
+//>>> 00000000FFFF0000 83 86 E0 07 00 00 02    add dword [rsi+7E0h],2
+// 00000000FFFF0007 E9 52 DB 03 00          jmp 000000010002DB5Eh
+
+// Multilevel pointers:
+// RSI=00000000015B3C60 + 18h
+// RSI=00000000015B3BE0 + 0h
+// RSI=00000000015B3B60 + 18h
+// RSI=0000000001536790 + 10h
 // 100325B00h + 0
