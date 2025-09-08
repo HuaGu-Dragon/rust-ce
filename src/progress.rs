@@ -215,6 +215,40 @@ impl Process {
 
         Ok(threads)
     }
+
+    pub fn alloc(&self, addr: usize, size: usize) -> anyhow::Result<usize> {
+        let addr = unsafe {
+            winapi::um::memoryapi::VirtualAllocEx(
+                self.handle.as_ptr(),
+                addr as _,
+                size,
+                winapi::um::winnt::MEM_COMMIT | winapi::um::winnt::MEM_RESERVE,
+                winapi::um::winnt::PAGE_EXECUTE_READWRITE,
+            )
+        };
+
+        if addr.is_null() {
+            Err(std::io::Error::last_os_error().into())
+        } else {
+            Ok(addr as usize)
+        }
+    }
+
+    pub fn dealloc(&self, addr: usize) -> anyhow::Result<()> {
+        if unsafe {
+            winapi::um::memoryapi::VirtualFreeEx(
+                self.handle.as_ptr(),
+                addr as _,
+                0,
+                winapi::um::winnt::MEM_RELEASE,
+            )
+        } == winapi::shared::minwindef::FALSE
+        {
+            Err(std::io::Error::last_os_error().into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Drop for Process {

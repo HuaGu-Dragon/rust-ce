@@ -306,6 +306,54 @@ pub fn write_breakpoint(process: &Process, address: usize) -> anyhow::Result<()>
                             process.write_memory(inst.ip() as usize, &value)?;
                         }
 
+                        input.clear();
+                        print!("Inject code to change the write value? (y/n) > ");
+                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                        std::io::stdin().read_line(&mut input).unwrap();
+                        let s = input.trim();
+                        if s == "y" {
+                            let region = process
+                                .memory_region()
+                                .into_iter()
+                                .rev()
+                                .find(|region| {
+                                    (region.State & winapi::um::winnt::MEM_FREE) != 0
+                                        && (region.BaseAddress as usize)
+                                            < info.ExceptionRecord.ExceptionAddress as usize
+                                })
+                                .unwrap();
+
+                            let address = region.BaseAddress as usize + region.RegionSize - 2048;
+                            let alloc_address = process.alloc(address, 2048)?;
+
+                            // jmp target_address
+                            // nop 2
+                            let mut jmp = [0xE9, 0, 0, 0, 0, 0x66, 0x90];
+                            jmp[1..5].copy_from_slice(
+                                &((alloc_address as isize
+                                    - (info.ExceptionRecord.ExceptionAddress as usize - 2) as isize)
+                                    as i32)
+                                    .to_ne_bytes(),
+                            );
+                            process.write_memory(
+                                info.ExceptionRecord.ExceptionAddress as usize - jmp.len(),
+                                &jmp,
+                            )?;
+
+                            // add dword ptr [rsi + 7E0h], 2
+                            // jmp back
+                            let mut injection =
+                                [0x83, 0x86, 0xE0, 0x07, 0x00, 0x00, 0x02, 0xE9, 0, 0, 0, 0];
+                            let inj_len = injection.len();
+                            injection[8..12].copy_from_slice(
+                                &((info.ExceptionRecord.ExceptionAddress as isize
+                                    - (alloc_address + inj_len) as isize)
+                                    as i32)
+                                    .to_ne_bytes(),
+                            );
+                            process.write_memory(alloc_address, &injection)?;
+                        }
+
                         break;
                     }
                 }
