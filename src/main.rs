@@ -190,19 +190,28 @@ pub fn write_address(process: &Process) -> anyhow::Result<()> {
         usize::from_str_radix(input.trim().trim_start_matches("0x"), 16)?
     };
 
-    let scan = loop {
-        match scan::write()? {
-            scan::Scan::Exact(v) => break v,
-            _ => {
-                println!("Please enter an exact value to write.");
-                continue;
+    input.clear();
+    print!("Hardware breakpoint on write? (y/n) > ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    std::io::stdin().read_line(&mut input)?;
+    let s = input.trim();
+
+    if s == "y" {
+        write_breakpoint(process, address)?;
+    } else {
+        let scan = loop {
+            match scan::write()? {
+                scan::Scan::Exact(v) => break v,
+                _ => {
+                    println!("Please enter an exact value to write.");
+                    continue;
+                }
             }
-        }
-    };
+        };
 
-    let bytes = process.write_memory(address, scan.mem_view())?;
-    println!("  Write {bytes} bytes to address: [{address:x}]");
-
+        let bytes = process.write_memory(address, scan.mem_view())?;
+        println!("  Write {bytes} bytes to address: [{address:x}]");
+    }
     Ok(())
 }
 
